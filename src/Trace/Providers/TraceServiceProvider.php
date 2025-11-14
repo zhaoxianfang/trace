@@ -1,6 +1,6 @@
 <?php
 
-namespace zxf\Template\Providers;
+namespace zxf\Trace\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Foundation\Console\AboutCommand;
