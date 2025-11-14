@@ -1,0 +1,49 @@
+{
+  "name": "zxf/trace",
+  "description": "系统操作调试",
+  "type": "library",
+  "keywords": ["trace", "debug", "zxf" ,"laravel"],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "zxf",
+      "email": "zxf@example.com",
+      "homepage": "https://yoc.cn"
+    }
+  ],
+  "require": {
+    "php": "^8.1"
+  },
+  "require-dev": {
+  },
+  "autoload": {
+    "psr-4": {
+      "zxf\\Trace\\": "src/Trace/"
+    },
+    "files": [
+      "src/helpers.php"
+    ]
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "zxf\\Trace\\Tests\\": "tests/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "zxf\\Trace\\Providers\\TraceServiceProvider"
+      ]
+    }
+  },
+  "config": {
+    "sort-packages": true,
+    "optimize-autoloader": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true,
+  "scripts": {
+    "post-autoload-dump": [
+    ]
+  }
+}
