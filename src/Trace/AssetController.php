@@ -13,10 +13,10 @@ class AssetController
     public function __construct()
     {
         $this->jsFiles = [
-            dirname(__DIR__, 1).'/Resource/js/trace.js',
+            dirname(__DIR__, 1).'/Resources/js/trace.js',
         ];
         $this->cssFiles = [
-            dirname(__DIR__, 1).'/Resource/css/trace.css',
+            dirname(__DIR__, 1).'/Resources/css/trace.css',
         ];
     }
 

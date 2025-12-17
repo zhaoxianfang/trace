@@ -5,8 +5,10 @@ namespace zxf\Trace\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Http\Kernel;
 use Composer\InstalledVersions;
 use zxf\Trace\Handle;
+use zxf\Trace\Middleware\TraceMiddleware;
 use zxf\Trace\TraceExceptionHandler;
 
 class TraceServiceProvider extends ServiceProvider
@@ -26,6 +28,9 @@ class TraceServiceProvider extends ServiceProvider
 
         // 加载 trace 路由
         $this->loadRoutesFrom(__DIR__.'/../routes/trace.php');
+
+        // 注册中间件
+        $this->registerMiddleware(TraceMiddleware::class);
 
         // 把 zxf/trace 添加到 about 命令中
         AboutCommand::add('Extend', [
@@ -54,6 +59,20 @@ class TraceServiceProvider extends ServiceProvider
 
             return new TraceExceptionHandler($originalHandler);
         });
+    }
+
+    /**
+     * 注册中间件 并全局启用
+     */
+    protected function registerMiddleware($middleware)
+    {
+        $kernel = $this->app->make(Kernel::class);
+        // $kernel->pushMiddleware($middleware); // 追加在后面
+        $kernel->prependMiddleware($middleware); // 放在最前面
+
+        // 把中间件添加到web组
+        // $kernel->appendMiddlewareToGroup('web', $middleware); // 追加在后面
+        // $kernel->prependMiddlewareToGroup('web', $middleware);   // 放在最前面
     }
 
     /**
