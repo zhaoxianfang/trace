@@ -27,10 +27,11 @@ class RouteServiceProvider extends ServiceProvider
      */
     public function map(): void
     {
-        $this->mapAssetRoutes();
+        // $this->mapAssetRoutes();
     }
 
     /**
+     * @deprecated 废弃
      * 注册资源文件路由
      */
     protected function mapAssetRoutes(): void
@@ -40,24 +41,24 @@ class RouteServiceProvider extends ServiceProvider
             ->namespace($this->namespace)
             ->group(function () {
                 // CSS 文件路由
-                Route::get('/zxf/templates/css/{file}', function ($file) {
+                Route::get('/zxf/trace/css/{file}', function ($file) {
                     return $this->serveAsset('css', $file);
-                })->where('file', '.*\.css$')->name('security.assets.css');
+                })->where('file', '.*\.css$')->name('trace.assets.css');
 
                 // JS 文件路由
-                Route::get('/zxf/templates/js/{file}', function ($file) {
+                Route::get('/zxf/trace/js/{file}', function ($file) {
                     return $this->serveAsset('js', $file);
-                })->where('file', '.*\.js$')->name('security.assets.js');
+                })->where('file', '.*\.js$')->name('trace.assets.js');
 
                 // 图片文件路由
-                Route::get('/zxf/templates/images/{file}', function ($file) {
+                Route::get('/zxf/trace/images/{file}', function ($file) {
                     return $this->serveAsset('images', $file);
-                })->where('file', '.*\.(png|jpg|jpeg|gif|svg|ico)$')->name('security.assets.images');
+                })->where('file', '.*\.(png|jpg|jpeg|gif|svg|ico)$')->name('trace.assets.images');
 
                 // 字体文件路由
-                Route::get('/zxf/templates/fonts/{file}', function ($file) {
+                Route::get('/zxf/trace/fonts/{file}', function ($file) {
                     return $this->serveAsset('fonts', $file);
-                })->where('file', '.*\.(woff|woff2|ttf|eot)$')->name('security.assets.fonts');
+                })->where('file', '.*\.(woff|woff2|ttf|eot)$')->name('trace.assets.fonts');
             });
     }
 
