@@ -12,7 +12,7 @@
 
 return [
     /**
-     * 是否开启 trace 功能
+     * 是否开启 trace 调试功能
      * 默认: true
      */
     'enabled'=>true,
