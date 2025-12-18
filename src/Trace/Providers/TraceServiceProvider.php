@@ -32,6 +32,10 @@ class TraceServiceProvider extends ServiceProvider
         // 注册中间件
         $this->registerMiddleware(TraceMiddleware::class);
 
+        $this->publishes([
+            __DIR__ . '/../../../config/trace.php' => config_path('trace.php'),
+        ], ['trace']);
+
         // 把 zxf/trace 添加到 about 命令中
         AboutCommand::add('Extend', [
             'zxf/trace' => fn () => InstalledVersions::getPrettyVersion('zxf/trace'),
@@ -64,7 +68,7 @@ class TraceServiceProvider extends ServiceProvider
     /**
      * 注册中间件 并全局启用
      */
-    protected function registerMiddleware($middleware)
+    protected function registerMiddleware($middleware): void
     {
         $kernel = $this->app->make(Kernel::class);
         // $kernel->pushMiddleware($middleware); // 追加在后面

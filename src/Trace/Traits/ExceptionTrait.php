@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
+use ParseError;
 use Throwable;
 
 /**
@@ -76,7 +77,7 @@ trait ExceptionTrait
             $e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException => 404,
             $e instanceof \Illuminate\Validation\ValidationException => 422,
             $e instanceof \Illuminate\Database\QueryException && str_contains($e->getMessage(), 'Duplicate entry') => 409,
-            default => $e->getCode() > 0 ? (int) $e->getCode() : (int) (method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500),
+            default => $e->getCode() > 0 ? $e->getCode() : (int) (method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500),
         };
 
         return self::$code;
@@ -136,7 +137,7 @@ trait ExceptionTrait
         }
 
         // 空消息 || 包含中文 || 4xx 的错误通常是人为提示或客户端错误，不算系统错误
-        if (empty($message = $exception->getMessage()) || (bool) preg_match('/[\x{4e00}-\x{9fa5}]/u', $message) || ($exception->getCode() >= 400 && $exception->getCode() < 500)) {
+        if (empty($message = $exception->getMessage()) || preg_match('/[\x{4e00}-\x{9fa5}]/u', $message) || ($exception->getCode() >= 400 && $exception->getCode() < 500)) {
             // 4xx 状态码 (客户端错误) -> 通常是用户/调用方错误
             // 很可能是人为的 abort() 调用 或者用户提交的数据错误等
             self::$isUserErr = true;
@@ -173,7 +174,7 @@ trait ExceptionTrait
     protected static function isFatalError(Throwable $exception): bool
     {
         return
-            $exception instanceof \ParseError // 语法错误，如语法拼写不正确。
+            $exception instanceof ParseError // 语法错误，如语法拼写不正确。
             // || $exception instanceof \Error
             || $exception instanceof \TypeError // 类型错误，例如传递的参数类型不符合预期
             || $exception instanceof \DivisionByZeroError // 除以零的错误
@@ -185,7 +186,7 @@ trait ExceptionTrait
     // 是否自定义模块异常接管类
     public function hasModuleCustomException(): bool
     {
-        $modulesExceptions = config('trace.namespace').'\\'.$this->getModuleName().'\Exceptions\Handler';
+        $modulesExceptions = trace_modules_name().'\\'.$this->getModuleName().'\Exceptions\Handler';
 
         return class_exists($modulesExceptions) && method_exists($modulesExceptions, 'render');
     }
@@ -194,7 +195,7 @@ trait ExceptionTrait
     public function handleModulesCustomException(Throwable $e, $request)
     {
         // 如果模块下定义了自定义的异常接管类 Handler，则交由模块下的异常类自己处理
-        $modulesExceptions = config('trace.namespace').'\\'.$this->getModuleName().'\Exceptions\Handler';
+        $modulesExceptions = trace_modules_name().'\\'.$this->getModuleName().'\Exceptions\Handler';
         if (class_exists($modulesExceptions) && method_exists($modulesExceptions, 'render')) {
             try {
                 if (collect($customRes = call_user_func_array([new $modulesExceptions, 'render'], [$request, $e]))->isNotEmpty()) {
@@ -212,6 +213,7 @@ trait ExceptionTrait
                 $this->showExitMessage($e);
             }
         }
+        return false;
     }
 
     private function getModuleName(): string
@@ -229,7 +231,7 @@ trait ExceptionTrait
      *
      * @return false|string
      */
-    private function getExceptionContent(Throwable $e)
+    private function getExceptionContent(Throwable $e): false|string
     {
         $startLine = $e->getLine() - 4;
         $endLine = $e->getLine() + 4;
@@ -307,7 +309,7 @@ trait ExceptionTrait
             ],
         ];
         // 如果是语法错误，$showTrace 为 true 就会陷入死循环
-        $showTrace = ! $e instanceof \ParseError;
+        $showTrace = ! $e instanceof ParseError;
 
         return $this->outputDebugHtml($content, self::$code.':'.self::$message, self::$code, $showTrace);
     }

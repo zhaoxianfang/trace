@@ -9,8 +9,8 @@
 /* Logo 图标右下角 */
 #tools_trace .trace-logo {
     position: fixed;
-    bottom: 0px;
-    right: 0px;
+    bottom: 0;
+    right: 0;
     height: 18px;
     cursor: pointer;
     z-index: 1001;

@@ -21,9 +21,9 @@ return [
      * 使用自定义处理的命名空间，例如在 App\Exceptions\Handler->render 中自定义处理 Trace 检测到的异常
      * 有些项目使用 Modules 多模块，这个配置会变得很有用
      *
-     * 默认: App
+     * 默认: Modules
      */
-    'namespace'=>'App',
+    'namespace'=>'Modules',
 
     /**
      * 自定义处理 Trace 调试产生的数据
@@ -39,7 +39,7 @@ return [
      *        public function handle(array $trace=[]): void
      *        {
      *            // 做点什么...
-     *            // Log::channel('stack')->debug('===== [Trace]调试: ===== ', $trace);
+     *            // Log::channel('stack')->debug("===== [Trace]调试: ===== ", $trace);
      *        }
      *    }
      */

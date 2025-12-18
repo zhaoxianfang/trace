@@ -29,7 +29,7 @@ if (! function_exists('trace')) {
      *                          trace(['hello', 'world']);
      * @return void
      */
-    function trace(mixed ...$args)
+    function trace(mixed ...$args): void
     {
         /** @var $trace Handle */
         $trace = app('trace');
@@ -147,8 +147,8 @@ if (! function_exists('get_trace_module_name')) {
                 $routeNamespace = $route->getAction()['namespace'];
                 $modulesNamespaceArr = array_filter(explode('\\', explode('Http\Controllers', $routeNamespace)[0]));
                 // 判断 $route->uri() 字符串中是否包含 无路由回调fallback ||
-                if (! str_contains($route->uri(), 'fallback') && ! empty($modulesNamespaceArr) && $modulesNamespaceArr[0] == modules_name()) {
-                    return $toUnderlineConvert ? underline_convert($modulesNamespaceArr[1]) : $modulesNamespaceArr[1];
+                if (! str_contains($route->uri(), 'fallback') && ! empty($modulesNamespaceArr) && $modulesNamespaceArr[0] == trace_modules_name()) {
+                    return $toUnderlineConvert ? strtolower(preg_replace('/(?<=[a-z])([A-Z])/', '_$1', $modulesNamespaceArr[1])) : $modulesNamespaceArr[1];
                 }
             }
             if (! empty($request = request())) {
@@ -159,7 +159,7 @@ if (! function_exists('get_trace_module_name')) {
             }
 
             return $toUnderlineConvert ? 'app' : 'App';
-        } catch (\Exception $err) {
+        } catch (Exception $err) {
             return get_trace_url_module_name($toUnderlineConvert);
         }
     }
@@ -177,5 +177,41 @@ if (! function_exists('get_trace_url_module_name')) {
         $module = str(request()->path())->before('/')->lower()->value() ?: 'app';
 
         return $toUnderlineConvert ? $module : \Illuminate\Support\Str::studly($module);
+    }
+}
+
+if (! function_exists('trace_modules_name')) {
+    /**
+     * 获取多模块的文件夹名称（默认：Modules）
+     *
+     * @return string 返回配置的模块命名空间或默认值
+     */
+    function trace_modules_name(): string
+    {
+        if (function_exists('modules_name')) {
+            return modules_name();
+        }
+        return config('trace.namespace', 'Modules');
+    }
+}
+
+
+if (! function_exists('set_protected_attr')) {
+    /**
+     * 使用反射 修改对象里面受保护属性的值
+     *
+     *
+     * @throws ReflectionException
+     */
+    function set_protected_attr($obj, $filed, $value): void
+    {
+        $reflectionClass = new ReflectionClass($obj);
+        try {
+            $reflectionClass->setStaticPropertyValue($filed, $value);
+        } catch (\Exception $err) {
+            $reflectionProperty = $reflectionClass->getProperty($filed);
+            $reflectionProperty->setAccessible(true);
+            $reflectionProperty->setValue($obj, $value);
+        }
     }
 }

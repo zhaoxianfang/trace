@@ -2,6 +2,7 @@
 
 namespace zxf\Trace\Traits;
 
+use Exception;
 use Illuminate\Support\Facades\Response;
 use zxf\Trace\Handle;
 
@@ -61,7 +62,7 @@ trait AppEndTrait
                 }
                 $callClass->handle($traceData);
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
         }
     }
 }

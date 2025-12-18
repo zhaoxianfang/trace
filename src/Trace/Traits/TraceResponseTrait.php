@@ -2,6 +2,7 @@
 
 namespace zxf\Trace\Traits;
 
+use Exception;
 use Illuminate\Http\Request;
 
 /**
@@ -10,7 +11,7 @@ use Illuminate\Http\Request;
 trait TraceResponseTrait
 {
     // 返回在页面只渲染调试页面
-    public function randerPage($trace)
+    public function randerPage($trace): string
     {
         $html = <<<'EOT'
     <div id="tools_trace">
@@ -95,7 +96,7 @@ EOT;
                     } else {
                         $html .= "<span class='json-right'></span>";
                     }
-                } catch (\Exception $e) {
+                } catch (Exception $e) {
                     $html .= "<div class='json-string-content'> Unrecognized data </div>";
                 }
                 $html .= '</li>';
@@ -152,7 +153,7 @@ EOT;
         if (! $request->isMethod('get')) {
             try {
                 $content = json_decode($content, true);
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
             }
             $content['_debugger'] = $traceContent;
             $content = json_encode($content, JSON_UNESCAPED_UNICODE);
@@ -178,7 +179,7 @@ EOT;
         $posJs = strripos($content, '</body>');
         if ($posJs !== false) {
             $content = substr($content, 0, $posJs).PHP_EOL.$traceContent.PHP_EOL.$script.substr($content, $posJs);
-            // set_protected_value($response, 'content', $traceContent);
+            // set_protected_attr($response, 'content', $traceContent);
         } else {
             $content = $content.PHP_EOL.$traceContent.PHP_EOL.$script;
         }

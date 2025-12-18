@@ -2,10 +2,20 @@
 
 namespace zxf\Trace;
 
+use Closure;
+use Exception;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use ParseError;
+use ReflectionException;
+use ReflectionFunction;
+use ReflectionMethod;
 use zxf\Trace\Traits\AppEndTrait;
 use zxf\Trace\Traits\ExceptionCodeTrait;
 use zxf\Trace\Traits\ExceptionCustomCallbackTrait;
@@ -28,7 +38,7 @@ class Handle
     protected $app;
 
     /**
-     * @var \Illuminate\Routing\Router
+     * @var Router
      */
     protected $router;
 
@@ -36,7 +46,7 @@ class Handle
 
     protected $startMemory;
 
-    protected $config = [
+    protected array $config = [
         'tabs' => [
             'messages' => 'Messages',
             'base' => 'Base',
@@ -56,10 +66,10 @@ class Handle
 
     protected array $messages = [];
 
-    /** @var \Illuminate\Http\Request */
+    /** @var Request */
     protected $request;
 
-    /** @var \Illuminate\Http\Response */
+    /** @var Response */
     protected $response;
 
     // 实例化并传入参数
@@ -92,7 +102,7 @@ class Handle
     /**
      * 监听模型事件
      */
-    public function listenModelEvent()
+    public function listenModelEvent(): void
     {
         $events = ['retrieved', 'creating', 'created', 'updating', 'updated', 'saving', 'saved', 'deleting', 'deleted', 'restoring', 'restored', 'replicating'];
         foreach ($events as $event) {
@@ -107,16 +117,16 @@ class Handle
      *
      * @return void
      */
-    protected function listenSql()
+    protected function listenSql(): void
     {
         // DB::enableQueryLog();
         $events = isset($this->app['events']) ? $this->app['events'] : null;
         try {
             // 监听SQL执行
-            $events->listen(function (\Illuminate\Database\Events\QueryExecuted $query) {
+            $events->listen(function (QueryExecuted $query) {
                 $this->addQuery($query);
             });
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
         }
 
         try {
@@ -148,19 +158,19 @@ class Handle
             $events->listen(function (\Illuminate\Database\Events\ConnectionEstablished $event) {
                 $this->addTransactionQuery('Connection Established', $event->connection);
             });
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
         }
     }
 
     /**
      * 记录sql
      *
-     * @param  \Illuminate\Database\Events\QueryExecuted  $query
+     * @param  QueryExecuted  $query
      */
-    private function addQuery($query)
+    private function addQuery($query): void
     {
         $this->sqlList[] = [
-            'query' => (string) $query->sql,
+            'query' => $query->sql,
             'type' => 'query',
             'bindings' => $query->connection->prepareBindings($query->bindings),
             'time' => $query->time, // 'ms'
@@ -174,9 +184,9 @@ class Handle
      *
      * @param  string  $event
      * @param  \Illuminate\Database\Connection  $connection
-     * @return array
+     * @return void
      */
-    private function addTransactionQuery($event, $connection)
+    private function addTransactionQuery($event, $connection): void
     {
         $this->sqlList[] = [
             'query' => '['.$connection->getName().':'.$connection->getConfig('driver').'] '.$event,
@@ -188,7 +198,7 @@ class Handle
         ];
     }
 
-    protected function logModelEvent($listenString, $model, $event)
+    protected function logModelEvent($listenString, $model, $event): void
     {
         $model = isset($model[0]) ? $model[0] : $model;
         // 使用: 分割 $model , 获取模型名称
@@ -203,7 +213,7 @@ class Handle
         ];
     }
 
-    public function output($response)
+    public function output($response): string
     {
         if (! is_enable_trace()) {
             // 运行在命令行下
@@ -216,7 +226,7 @@ class Handle
         // 判断响应数据 $response 中是否有异常数据 exception
         if (property_exists($response, 'exception') && ! empty($response->exception)) {
             $exceptionObj = $response->exception;
-            $hasParseError = $exceptionObj instanceof \ParseError; // 判断是否有语法错误
+            $hasParseError = $exceptionObj instanceof ParseError; // 判断是否有语法错误
             $exceptionString = $this->getExceptionContent($response->exception);
             $fileName = $this->getFilePath($exceptionObj->getFile()); //
             $editor = config('trace.editor') ?? 'phpstorm';
@@ -263,7 +273,7 @@ class Handle
         return '';
     }
 
-    private function getModelList()
+    private function getModelList(): array
     {
         $data = [];
         foreach (self::$modelList as $model) {
@@ -281,7 +291,7 @@ class Handle
         return $list;
     }
 
-    private function getBaseInfo($sqlTimes = 0)
+    private function getBaseInfo($sqlTimes = 0): array
     {
         // 获取基本信息
         $runtime = bcsub(microtime(true), $this->startTime, 3);
@@ -297,7 +307,7 @@ class Handle
             if ($this->request->session()) {
                 $base['会话信息'] = 'SESSION_ID='.$this->request->session()->getId();
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $base['会话信息'] = 'SESSION_ID=';
         }
 
@@ -366,9 +376,9 @@ class Handle
      * @param  bool  $hasParseError  是否包含语法错误信息
      * @return array|string[]
      *
-     * @throws \ReflectionException
+     * @throws ReflectionException
      */
-    private function getRouteInfo(bool $hasParseError)
+    private function getRouteInfo(bool $hasParseError): array
     {
         $route = $this->router->current();
         if (! is_a($route, 'Illuminate\Routing\Route')) {
@@ -388,15 +398,15 @@ class Handle
             if (str_contains($controller, '@')) {
                 [$controller, $method] = explode('@', $controller);
                 if (class_exists($controller) && method_exists($controller, $method)) {
-                    $reflector = new \ReflectionMethod($controller, $method);
+                    $reflector = new ReflectionMethod($controller, $method);
                 }
                 unset($result['uses']);
-            } elseif ($uses instanceof \Closure) {
-                $reflector = new \ReflectionFunction($uses);
+            } elseif ($uses instanceof Closure) {
+                $reflector = new ReflectionFunction($uses);
                 $result['uses'] = $uses;
             } elseif (is_string($uses) && str_contains($uses, '@__invoke')) {
                 if (class_exists($controller) && method_exists($controller, 'render')) {
-                    $reflector = new \ReflectionMethod($controller, 'render');
+                    $reflector = new ReflectionMethod($controller, 'render');
                     $result['controller'] = $controller.'@render';
                 }
             }
@@ -438,7 +448,7 @@ class Handle
         return $result;
     }
 
-    private function getSqlInfo()
+    private function getSqlInfo(): array
     {
         // $this->sqlList = DB::getQueryLog(); // 获取查询sql
 
@@ -479,13 +489,13 @@ class Handle
             }
 
             return $session->all();
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             // 未装载 session
             return [];
         }
     }
 
-    private function getRequestInfo()
+    private function getRequestInfo(): array
     {
         return [
             'path' => $this->request->path(),
@@ -503,7 +513,7 @@ class Handle
         ];
     }
 
-    public function getViewInfo()
+    public function getViewInfo(): array
     {
         $viewFiles = [];
         // 获取当前路由的其他视图文件
@@ -549,7 +559,7 @@ class Handle
 
     }
 
-    public function getFilePath($file = '')
+    public function getFilePath($file = ''): string
     {
         return substr($file, strlen(base_path()) + 1);
     }

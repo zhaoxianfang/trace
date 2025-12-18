@@ -4,6 +4,7 @@ namespace  zxf\Trace\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use zxf\Trace\Handle;
 
@@ -43,9 +44,9 @@ class TraceMiddleware
     /**
      * 在响应发送到浏览器后处理任务。
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Illuminate\Http\Response  $response
-     * @return void
+     * @param Request $request
+     * @param  Response  $response
+     * @return Response
      */
     public function terminate($request, $response)
     {

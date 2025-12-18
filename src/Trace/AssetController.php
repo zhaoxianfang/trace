@@ -2,6 +2,7 @@
 
 namespace zxf\Trace;
 
+use DateTime;
 use Illuminate\Http\Response;
 
 class AssetController
@@ -23,7 +24,7 @@ class AssetController
     /**
      * 获取调试js
      */
-    public function js()
+    public function js(): Response
     {
         $content = '';
         foreach ($this->jsFiles as $file) {
@@ -40,7 +41,7 @@ class AssetController
     /**
      * 获取调试css
      */
-    public function css()
+    public function css(): Response
     {
         $content = '';
         foreach ($this->cssFiles as $file) {
@@ -57,11 +58,11 @@ class AssetController
     /**
      * Cache the response 1 year (31536000 sec)
      */
-    protected function cacheResponse(Response $response)
+    protected function cacheResponse(Response $response): Response
     {
         $response->setSharedMaxAge(31536000);
         $response->setMaxAge(31536000);
-        $response->setExpires(new \DateTime('+1 year'));
+        $response->setExpires(new DateTime('+1 year'));
 
         return $response;
     }

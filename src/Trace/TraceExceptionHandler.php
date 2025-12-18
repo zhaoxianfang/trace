@@ -4,6 +4,7 @@ namespace zxf\Trace;
 
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Request;
+use ParseError;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
@@ -188,8 +189,8 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     protected function pringTrace($request, Response $response): Response
     {
-        if ($this->lastException instanceof \ParseError) {
-            set_protected_value($response, 'exception', $this->lastException);
+        if ($this->lastException instanceof ParseError) {
+            set_protected_attr($response, 'exception', $this->lastException);
 
             return $this->trace->renderTraceStyleAndScript($request, $response);
         }
