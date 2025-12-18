@@ -8,7 +8,15 @@ if (! function_exists('is_enable_trace')) {
      */
     function is_enable_trace(): bool
     {
-        return !app()->runningInConsole() && (!app()->environment('production') || config('app.debug')) && !request()->expectsJson() && ! is_static_file(request()->fullUrl(), true);
+        // 命令行下关闭 trace 调试
+        if(app()->runningInConsole()){
+            return false;
+        }
+        // [最高优先级]如果在 config 文件夹下的app.php 文件中配置了 trace 为 true|false 则使用此配置
+        if(is_bool(config('app.trace'))){
+            return config('app.trace');
+        }
+        return (!app()->environment('production') || config('app.debug')) && !request()->expectsJson() && ! is_static_file(request()->fullUrl(), true);
     }
 }
 
@@ -70,5 +78,47 @@ if (! function_exists('is_static_file')) {
         // array: 全部采用自定义传入的扩展名进行判断
         // 传值不为空?检查扩展名是否属于资源文件类型:false
         return ! empty($ext) && in_array(strtolower($ext), $simpleOrCustomExt);
+    }
+}
+
+
+if (! function_exists('size_format')) {
+    /**
+     * 文件字节转具体大小
+     *
+     * 优化内容：
+     * 1. 支持二进制和十进制单位
+     * 2. 改进精度控制
+     * 3. 添加自定义单位支持
+     *
+     * @param int $size 文件字节
+     * @param int $dec 小数位数
+     * @param bool $binary 是否使用二进制单位 (true: KiB, MiB; false: KB, MB)
+     * @return string
+     */
+    function size_format(int $size, int $dec = 2, bool $binary = false): string
+    {
+        if ($size < 0) {
+            throw new InvalidArgumentException('文件大小不能为负数');
+        }
+
+        if ($size === 0) {
+            return '0B';
+        }
+
+        $base = $binary ? 1024 : 1000;
+        $units = $binary ?
+            ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB'] :
+            ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+
+        $pos = 0;
+        $formattedSize = $size;
+
+        while ($formattedSize >= $base && $pos < count($units) - 1) {
+            $formattedSize /= $base;
+            $pos++;
+        }
+
+        return round($formattedSize, $dec) . $units[$pos];
     }
 }

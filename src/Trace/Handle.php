@@ -290,7 +290,7 @@ class Handle
             '请求信息' => $this->request->method().' '.$this->request->fullUrl(),
             '运行时间' => $runtime.'秒',
             '吞吐率' => $reqs.'req/s',
-            '内存消耗' => byteFormat(memory_get_usage() - $this->startMemory),
+            '内存消耗' => size_format(memory_get_usage() - $this->startMemory),
             '查询时间' => $sqlTimes.'秒',
         ];
         try {
@@ -330,7 +330,7 @@ class Handle
             $freeSpace = disk_free_space($directoryPath); // 磁盘可用空间
             $useSpace = bcsub($totalSpace, $freeSpace, 0); // 磁盘已用空间
             $usageRate = bcmul(bcdiv($useSpace, $totalSpace, 5), 100, 2).'%'; // 磁盘使用率
-            $base['Disk Space'] = 'total:'.byteFormat($totalSpace).'; used:'.byteFormat($useSpace).'; free:'.byteFormat($freeSpace).'; usage-rate:'.$usageRate;
+            $base['Disk Space'] = 'total:'.size_format($totalSpace).'; used:'.size_format($useSpace).'; free:'.size_format($freeSpace).'; usage-rate:'.$usageRate;
         }
 
         return $base;

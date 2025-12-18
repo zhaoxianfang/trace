@@ -46,19 +46,20 @@ trait ExceptionShowDebugHtmlTrait
             } else {
                 $content .= '<li class="info-item">
                     <span class="info-label">'.$row['label'].'：</span>
-                    <div class="info-value">'.$row['value'].'</div>
+                    <div class="info-value">'.(is_string($row['value']) ? $row['value'] : var_export($row['value'], true)).'</div>
                 </li>';
             }
         }
         $sysName = config('app.name', '威四方');
         $copyright = '&copy; '.date('Y').' '.$sysName.' ('.config('app.url', 'https://weisifang.com').') 版权所有.';
+        $title = mb_strlen($title, 'utf-8') > 15 ? mb_substr($title, 0, 15, 'utf-8').'...' : $title;
         $html = <<<HTML
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>出错啦|{$sysName}</title>
+    <title>{$title}|{$sysName}</title>
     <style>
         /* 基础样式重置 */
         * {
