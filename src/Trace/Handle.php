@@ -219,7 +219,7 @@ class Handle
             $hasParseError = $exceptionObj instanceof \ParseError; // 判断是否有语法错误
             $exceptionString = $this->getExceptionContent($response->exception);
             $fileName = $this->getFilePath($exceptionObj->getFile()); //
-            $editor = config('modules.editor') ?? 'phpstorm';
+            $editor = config('trace.editor') ?? 'phpstorm';
             $exception = [
                 'message' => $exceptionObj->getMessage(),
                 'line' => $exceptionObj->getLine(),
@@ -410,7 +410,7 @@ class Handle
         if (isset($reflector)) {
             $fileName = $this->getFilePath($reflector->getFileName()); //
 
-            $editor = config('modules.editor') ?? 'phpstorm';
+            $editor = config('trace.editor') ?? 'phpstorm';
             // $result['file'] = $fileName . ':' . $reflector->getStartLine() . '-' . $reflector->getEndLine();
             $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
         }

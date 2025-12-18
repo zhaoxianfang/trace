@@ -12,9 +12,9 @@ if (! function_exists('is_enable_trace')) {
         if(app()->runningInConsole()){
             return false;
         }
-        // [最高优先级]如果在 config 文件夹下的app.php 文件中配置了 trace 为 true|false 则使用此配置
-        if(is_bool(config('app.trace'))){
-            return config('app.trace');
+        // [最高优先级]如果在 config 文件夹下的 trace.php 文件中配置了 enabled 为 true|false 则使用此配置
+        if(is_bool(config('trace.enabled'))){
+            return config('trace.enabled');
         }
         return (!app()->environment('production') || config('app.debug')) && !request()->expectsJson() && ! is_static_file(request()->fullUrl(), true);
     }
@@ -120,5 +120,62 @@ if (! function_exists('size_format')) {
         }
 
         return round($formattedSize, $dec) . $units[$pos];
+    }
+}
+
+
+if (! function_exists('get_trace_module_name')) {
+    /**
+     * 获取当前所在模块
+     *
+     * 在 Modules 模块里面 获取当前所在模块名称
+     * 注意，需要在 Modules 里面调用，否则返回 App
+     *
+     * @param  bool  $toUnderlineConvert  是否转换为 驼峰+小写 模式
+     * @return mixed|string
+     */
+    function get_trace_module_name(?bool $toUnderlineConvert = false): mixed
+    {
+        if (function_exists('get_module_name')) {
+            return get_module_name($toUnderlineConvert);
+        }
+        try {
+            if (app()->runningInConsole()) {
+                return $toUnderlineConvert ? 'command' : 'Command';
+            }
+            if (! empty($request = request()) && ! empty($route = $request->route())) {
+                $routeNamespace = $route->getAction()['namespace'];
+                $modulesNamespaceArr = array_filter(explode('\\', explode('Http\Controllers', $routeNamespace)[0]));
+                // 判断 $route->uri() 字符串中是否包含 无路由回调fallback ||
+                if (! str_contains($route->uri(), 'fallback') && ! empty($modulesNamespaceArr) && $modulesNamespaceArr[0] == modules_name()) {
+                    return $toUnderlineConvert ? underline_convert($modulesNamespaceArr[1]) : $modulesNamespaceArr[1];
+                }
+            }
+            if (! empty($request = request())) {
+                // 获取 $request->path() 中第一个 / 之前的字符串
+                if ($res = strstr(trim($request->path(), '/'), '/', true)) {
+                    return $res;
+                }
+            }
+
+            return $toUnderlineConvert ? 'app' : 'App';
+        } catch (\Exception $err) {
+            return get_trace_url_module_name($toUnderlineConvert);
+        }
+    }
+}
+
+if (! function_exists('get_trace_url_module_name')) {
+    /**
+     * 获取 url 中的模块名称(url前缀模块名称), 例如：http://www.xxx.com/docs/xxx/xxx/xxx 中的 docs
+     */
+    function get_trace_url_module_name(?bool $toUnderlineConvert = false): string
+    {
+        if (function_exists('get_url_module_name')) {
+            return get_url_module_name($toUnderlineConvert);
+        }
+        $module = str(request()->path())->before('/')->lower()->value() ?: 'app';
+
+        return $toUnderlineConvert ? $module : \Illuminate\Support\Str::studly($module);
     }
 }

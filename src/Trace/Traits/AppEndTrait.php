@@ -46,7 +46,7 @@ trait AppEndTrait
     public function traceEndHandle(array $traceData = []): void
     {
         try {
-            if (! empty($handleClass = config('modules.trace_end_handle_class'))) {
+            if (! empty($handleClass = config('trace.end_handle_class'))) {
                 // 检查类是否存在
                 if (! class_exists($handleClass)) {
                     return;

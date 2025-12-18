@@ -28,9 +28,6 @@ trait ExceptionNotifyTrait
                 $extendedMessage .= "<p style='font-size: 10px;'>[调试提示]:</p>";
                 $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$matches[1]}」相关的类、中间件、路由是否存在；</p>";
                 $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$matches[1]}」相关的命名空间或字符串大小写等是否正确</p>";
-                if (in_array($matches[1], (array) config('modules.allow_automatic_load_middleware_groups'))) {
-                    $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查 <code>modules.allow_automatic_load_middleware_groups</code>里的「{$matches[1]}」中间件分组是否定义</p>";
-                }
             }
         }
 

@@ -116,7 +116,7 @@ EOT;
 
     protected function handleTraceData($data = []): string
     {
-        $editor = config('modules.editor') ?? 'phpstorm';
+        $editor = config('trace.editor') ?? 'phpstorm';
         $str = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($data['file_path']).'&amp;line='.$data['line'].'" class="phpdebugbar-link">'.$data['local'].'</a></span>';
 
         if (is_array($data['var']) && ! empty($data['var'])) {

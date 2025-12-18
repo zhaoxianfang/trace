@@ -38,7 +38,7 @@ trait ExceptionShowDebugHtmlTrait
                     <div class="info-value"><pre><code>'.$row['value'].'</code></pre></div>
                 </li>';
             } elseif ($row['type'] == 'debug_file') {
-                $editor = config('modules.editor') ?? 'phpstorm';
+                $editor = config('trace.editor') ?? 'phpstorm';
                 $content .= '<li class="info-item">
                     <span class="info-label">'.$row['label'].'：</span>
                     <div class="info-value">'.'<a href="'.$editor.'://open?file='.urlencode($row['file']).'&amp;line='.$row['line'].'" class="phpdebugbar-link">'.($row['value']).'</a>'.'</div>

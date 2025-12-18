@@ -185,7 +185,7 @@ trait ExceptionTrait
     // 是否自定义模块异常接管类
     public function hasModuleCustomException(): bool
     {
-        $modulesExceptions = config('modules.namespace').'\\'.$this->getModuleName().'\Exceptions\Handler';
+        $modulesExceptions = config('trace.namespace').'\\'.$this->getModuleName().'\Exceptions\Handler';
 
         return class_exists($modulesExceptions) && method_exists($modulesExceptions, 'render');
     }
@@ -194,7 +194,7 @@ trait ExceptionTrait
     public function handleModulesCustomException(Throwable $e, $request)
     {
         // 如果模块下定义了自定义的异常接管类 Handler，则交由模块下的异常类自己处理
-        $modulesExceptions = config('modules.namespace').'\\'.$this->getModuleName().'\Exceptions\Handler';
+        $modulesExceptions = config('trace.namespace').'\\'.$this->getModuleName().'\Exceptions\Handler';
         if (class_exists($modulesExceptions) && method_exists($modulesExceptions, 'render')) {
             try {
                 if (collect($customRes = call_user_func_array([new $modulesExceptions, 'render'], [$request, $e]))->isNotEmpty()) {
@@ -216,9 +216,9 @@ trait ExceptionTrait
 
     private function getModuleName(): string
     {
-        $moduleName = get_module_name();
+        $moduleName = get_trace_module_name();
         if (empty($moduleName) || strtolower($moduleName) == 'app') {
-            $moduleName = get_url_module_name();
+            $moduleName = get_trace_url_module_name();
         }
 
         return ucwords($moduleName);
