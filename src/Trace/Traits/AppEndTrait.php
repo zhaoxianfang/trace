@@ -60,6 +60,7 @@ trait AppEndTrait
                 if (! is_callable([$callClass, 'handle'])) {
                     return;
                 }
+                // 传递数据给 $handleClass 类的 handle 方法
                 $callClass->handle($traceData);
             }
         } catch (Exception $e) {

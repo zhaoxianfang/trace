@@ -165,17 +165,24 @@ class Handle
     /**
      * 记录sql
      *
-     * @param  QueryExecuted  $query
+     * @param  QueryExecuted  $event
      */
-    private function addQuery($query): void
+    private function addQuery($event): void
     {
+        // 获取绑定的参数
+        $bindings = $event->bindings;
+        $sql = $event->sql;
+
+        // 替换参数占位符
+        foreach ($bindings as $binding) {
+            $binding = is_string($binding) ? "'{$binding}'" : $binding;
+            $sql = preg_replace('/\?/', $binding, $sql, 1);
+        }
         $this->sqlList[] = [
-            'query' => $query->sql,
-            'type' => 'query',
-            'bindings' => $query->connection->prepareBindings($query->bindings),
-            'time' => $query->time, // 'ms'
-            // 'connection' => $query->connection->getName(),
-            // 'driver'     => $query->connection->getConfig('driver'),
+            'sql' => $sql,
+            'type' => 'Query',
+            'time' => $event->time, // 'ms'
+            // 'connection' => $event->connectionName, // eg: mysql
         ];
     }
 
@@ -189,9 +196,8 @@ class Handle
     private function addTransactionQuery($event, $connection): void
     {
         $this->sqlList[] = [
-            'query' => '['.$connection->getName().':'.$connection->getConfig('driver').'] '.$event,
-            'type' => 'transaction',
-            'bindings' => [],
+            'sql' => '['.$connection->getName().':'.$connection->getConfig('driver').'] '.$event,
+            'type' => 'Transaction',
             'time' => 0,
             // 'connection' => $connection->getName(),
             // 'driver'     => $connection->getConfig('driver'),
@@ -258,12 +264,17 @@ class Handle
             }
             // 显示数字提示
             $showTips = in_array($name, ['messages', 'sql', 'models']) && ! empty($result) ? ' ('.count($result).')' : '';
-            $showTips = in_array($name, ['exception']) && ! empty($result) ? ' ◉' : $showTips;
+            $showTips = in_array($name, ['exception']) && ! empty($result) ? ' 🔴' : $showTips;
 
-            $trace[$title.$showTips] = ! empty($result) ? $result : ['暂无内容'.($name == 'messages' ? '<span style="font-size: 9px;color: #aaa;">tips: 使用 trace(mixed ...$args) 进行打印输出调试</span>' : '')];
+            $trace[$title.$showTips] = ! empty($result) ? $result : $this->getEmptyTips($name);
         }
 
-        $this->traceEndHandle($trace);
+        try {
+            // 自定义处理
+            $this->traceEndHandle($trace);
+        } catch (Exception $e) {
+            return '';
+        }
 
         // 不是ajax请求的GET请求 && 不是生产环境 的直接在页面渲染
         if ($this->request->isMethod('get') && ! request()->expectsJson() && ! ($response instanceof \Illuminate\Http\JsonResponse) && ! app()->environment('production')) {
@@ -271,6 +282,19 @@ class Handle
         }
 
         return '';
+    }
+
+    // 获取空状态下的tab 提示信息
+    private function getEmptyTips(?string $tabName=''):array
+    {
+        [$message, $tips] = match (strtolower($tabName)) {
+            'messages' => ['暂无调试内容', '使用 trace(mixed ...$args) 函数进行调试'],
+            'sql' => ['暂无sql查询', ''],
+            'view' => ['没有加载视图', ''],
+            'exception' => ['暂无异常信息', ''],
+            default => ['暂无内容', ''],
+        };
+        return [$message.(!empty($tips)? ' <span style="font-size: 12px;color: #aaa;">提示: '.$tips.'</span>' : '') ];
     }
 
     private function getModelList(): array
@@ -453,26 +477,16 @@ class Handle
         // $this->sqlList = DB::getQueryLog(); // 获取查询sql
 
         $sqlTimes = 0;
+        // $this->sqlList 里面包含 sql、time、type 字段
         foreach ($this->sqlList as &$item) {
             if (! isset($item['time'])) {
                 continue;
             }
             $sqlTimes = bcadd($sqlTimes, $item['time'], 3);
-
-            if ($item['type'] == 'transaction') {
-                // 事务
-                $item = $item['query'];
-            } else {
-                // curd
-                $item['right'] = $item['time'].'ms'; // 显示时间
-                // 提取 $item['query'] 里面 第一个空格前的字符串
-                $query = trim($item['query']);
-                $item['label'] = strtoupper(substr($query, 0, strpos($query, ' ')));
-                unset($item['time']);
-                unset($item['connection']);
-                unset($item['driver']);
-            }
-
+            $item = [
+                'label' => $item['sql'],
+                'right' => !empty($item['time'])?$item['time'].'ms':'-',
+            ];
         }
         // 毫秒转秒
         $sqlTimes = $sqlTimes > 0 ? bcdiv($sqlTimes, 1000, 3) : 0;

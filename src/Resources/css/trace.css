@@ -1,5 +1,12 @@
+#trace-tools-box {
+    all: initial; /* 重置所有继承属性 */
+}
 
-#tools_trace {
+#trace-tools-box * {
+    all: unset; /* 重置所有子元素 */
+}
+
+#trace-tools-box {
     position: fixed;
     z-index: 99999999;
     font-size: 14px !important;
@@ -7,7 +14,7 @@
 }
 
 /* Logo 图标右下角 */
-#tools_trace .trace-logo {
+#trace-tools-box .trace-logo {
     position: fixed;
     bottom: 0;
     right: 0;
@@ -23,17 +30,17 @@
     box-sizing: content-box;
 }
 
-#tools_trace .trace-logo .logo {
+#trace-tools-box .trace-logo .logo {
     float: left;
     background-color: #fff !important;
 }
 
-#tools_trace .trace-logo .title {
+#trace-tools-box .trace-logo .title {
     margin: 0 4px;
 }
 
 /* Tabs 容器 */
-#tools_trace .tabs-container {
+#trace-tools-box .tabs-container {
     position: fixed;
     bottom: 0;
     left: 0;
@@ -47,7 +54,7 @@
 }
 
 /* Tabs 头部 */
-#tools_trace .tabs-header {
+#trace-tools-box .tabs-header {
     display: flex;
     align-items: center;
     padding: 0 8px;
@@ -57,19 +64,19 @@
     overflow: auto;
 }
 
-#tools_trace .tabs-logo-small {
+#trace-tools-box .tabs-logo-small {
     height: 22px;
     margin: 0 15px;
     cursor: pointer;
 }
 
-#tools_trace .tabs-menu {
+#trace-tools-box .tabs-menu {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
 }
 
-#tools_trace .tabs-item {
+#trace-tools-box .tabs-item {
     padding: 8px 12px;
     cursor: pointer;
     font-weight: bold;
@@ -78,13 +85,13 @@
     white-space: nowrap;
 }
 
-#tools_trace .tabs-item.active {
+#trace-tools-box .tabs-item.active {
     background-color: #eb4432;
     color: #fff;
     border-radius: 0;
 }
 
-#tools_trace .tabs-close {
+#trace-tools-box .tabs-close {
     margin-left: auto;
     padding: 2px 6px;
     cursor: pointer;
@@ -93,12 +100,12 @@
     min-width: 30px;
 }
 
-#tools_trace .tabs-close:hover {
+#trace-tools-box .tabs-close:hover {
     color: #fff;
 }
 
 /* Tabs 内容 */
-#tools_trace .tabs-content {
+#trace-tools-box .tabs-content {
     flex: 1;
     padding: 0;
     background: #252a37;
@@ -107,22 +114,22 @@
     display: none;
 }
 
-#tools_trace a {
+#trace-tools-box a {
     color: #1775cc !important;
     cursor: pointer;
 }
 
-#tools_trace .tabs-content.active {
+#trace-tools-box .tabs-content.active {
     display: block;
 }
 
-#tools_trace ul {
+#trace-tools-box ul {
     list-style: none;
     margin: 0;
     padding: 0;
 }
 
-#tools_trace li {
+#trace-tools-box li {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
@@ -130,16 +137,16 @@
     margin: 0 !important;
 }
 
-/*#tools_trace li:nth-child(odd) {
+/*#trace-tools-box li:nth-child(odd) {
   background-color: #252a37;
 }*/
 
-#tools_trace li:nth-child(even) {
+#trace-tools-box li:nth-child(even) {
     background-color: #18181b;
     color: white;
 }
 
-#tools_trace li .json-label {
+#trace-tools-box li .json-label {
     /*      flex: 0 0 25%;*/
     flex: 1;
     /*      max-width: 25%;*/
@@ -147,21 +154,21 @@
     word-break: break-word;
 }
 
-#tools_trace li .json-arrow-pre-wrapper {
-    flex: 0 0 70%;
-    max-width: 70%;
+#trace-tools-box li .json-arrow-pre-wrapper {
+    flex: 0 0 75%;
+    max-width: 75%;
     display: flex;
     flex-direction: column;
 }
 
-#tools_trace li .json-string-content {
-    flex: 0 0 70%;
-    max-width: 70%;
+#trace-tools-box li .json-string-content {
+    flex: 0 0 75%;
+    max-width: 75%;
     display: flex;
     flex-direction: column;
 }
 
-#tools_trace li .json-right {
+#trace-tools-box li .json-right {
     /*flex: 0 0 5%;*/
     /*max-width: 5%;*/
     width: 70px;
@@ -169,14 +176,14 @@
     flex-direction: column;
 }
 
-#tools_trace .json-arrow {
+#trace-tools-box .json-arrow {
     display: inline-block;
     font-weight: bold;
     cursor: pointer;
     margin-right: 10px;
 }
 
-#tools_trace pre {
+#trace-tools-box pre {
     display: none;
     background-color: #f4f4f4;
     color: #333;
@@ -193,6 +200,13 @@
     background-position: 0 0, 0 14px;
 }
 
-#tools_trace pre.show {
+#trace-tools-box pre.show {
     display: block;
 }
+
+/*展开/收起文本*/
+#trace-tools-box .truncated { white-space: nowrap; overflow: hidden; }
+#trace-tools-box .expanded { white-space: normal; }
+#trace-tools-box .expand-btn { color: #1890ff; cursor: pointer; margin-left: 4px; }
+#trace-tools-box .expand-btn::before { content: '▶'; font-size: 10px; margin-right: 2px; }
+#trace-tools-box .expanded .expand-btn::before { transform: rotate(90deg); }

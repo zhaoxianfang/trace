@@ -7,10 +7,10 @@ function trace_reset_allowed_value() {
 }
 
 document.addEventListener('click', function (e) {
-    const tabsLogoEvent = e.target.closest("#tools_trace .trace-logo");
-    const closeButton = e.target.closest("#tools_trace .tabs-close");
-    const tabsContainerDom = document.querySelector("#tools_trace .tabs-container");
-    const tabsLogoDom = document.querySelector("#tools_trace .trace-logo");
+    const tabsLogoEvent = e.target.closest("#trace-tools-box .trace-logo");
+    const closeButton = e.target.closest("#trace-tools-box .tabs-close");
+    const tabsContainerDom = document.querySelector("#trace-tools-box .tabs-container");
+    const tabsLogoDom = document.querySelector("#trace-tools-box .trace-logo");
     if (tabsLogoEvent && isClickAllowed) { // 点击 Logo 展开 Tabs
         tabsLogoDom.style.display = "none"; // 隐藏 Logo
         tabsContainerDom.style.display = "flex"; // 显示 Tabs
@@ -24,8 +24,8 @@ document.addEventListener('click', function (e) {
 });
 
 document.addEventListener('DOMContentLoaded', function () {
-    const tabItems = document.querySelectorAll("#tools_trace .tabs-item");
-    const tabContents = document.querySelectorAll("#tools_trace .tabs-content");
+    const tabItems = document.querySelectorAll("#trace-tools-box .tabs-item");
+    const tabContents = document.querySelectorAll("#trace-tools-box .tabs-content");
 
     // 激活指定 Tab
     function activateTab(index) {
@@ -66,9 +66,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // 初始化 JSON 列表
-    const jsonElements = document.querySelectorAll("#tools_trace .json");
-    const arrowElements = document.querySelectorAll("#tools_trace .json-arrow");
-    const labelElements = document.querySelectorAll("#tools_trace .json-label");
+    const jsonElements = document.querySelectorAll("#trace-tools-box .json");
+    const arrowElements = document.querySelectorAll("#trace-tools-box .json-arrow");
+    const labelElements = document.querySelectorAll("#trace-tools-box .json-label");
 
     jsonElements.forEach((jsonElement, index) => {
         let jsonText = jsonElement.textContent.trim();
@@ -80,6 +80,27 @@ document.addEventListener('DOMContentLoaded', function () {
         jsonElement.setAttribute("data-original", jsonText);
         initializeJsonDisplay(jsonElement, arrowElements[index], labelElements[index]);
     });
+});
+
+
+// 展开/收起长字符串
+document.querySelectorAll('#trace-tools-box .json-label').forEach(label => {
+    const text = label.textContent;
+    if (text.length > 100) {
+        label.full = text;
+        label.short = text.substr(0, 100) + '...';
+        label.innerHTML = label.short + '<span class="expand-btn">展开</span>';
+        label.classList.add('truncated');
+
+        label.addEventListener('click', e => {
+            if (e.target.classList.contains('expand-btn')) {
+                const expanded = label.classList.toggle('expanded');
+                label.innerHTML = (expanded ? label.full : label.short) +
+                    `<span class="expand-btn">${expanded ? '收起' : '展开'}</span>`;
+                expanded ? label.classList.remove('truncated') : label.classList.add('truncated');
+            }
+        });
+    }
 });
 
 // 提取最外层的 {} 或 [] 内容, 防止 dom 里面包含非json 的dom; eg:<pre class="json">[]<button class="copy-code-btn">复制</button></pre>

@@ -215,3 +215,23 @@ if (! function_exists('set_protected_attr')) {
         }
     }
 }
+
+if (! function_exists('format_param')) {
+    /**
+     * 显示变量的值；例如 布尔类型的true 显示为字符串的TRUE
+     *
+     * @param  mixed  $value
+     * @return string
+     */
+    function format_param(mixed $value): string
+    {
+        return match (true) {
+            $value === ''     => '\'\'',
+            $value === null   => 'NULL',
+            is_bool($value)   => $value ? 'TRUE' : 'FALSE',
+            is_string($value) => $value,
+            is_scalar($value) => (string)$value,
+            default => trim(var_export($value, true), "'")
+        };
+    }
+}

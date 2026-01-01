@@ -14,7 +14,7 @@ trait TraceResponseTrait
     public function randerPage($trace): string
     {
         $html = <<<'EOT'
-    <div id="tools_trace">
+    <div id="trace-tools-box">
     <div class="trace-logo">
       <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAcBJREFUOE/F1MtKAlEYB/DvaI1OlJIuhBYKFbSzi9lKcIJadnkIoQeoTYvw0mu0laBlPYAOQUG2cFGEQdioQXbTUcsy9cQZm+HkXBRcdEAGjt/8zn/OzHcQ9DEwH4qQMhQ8kK5GAxn9iRMhDsw4DBi4Th2K9kI1QTXUvaw+rAI7j4fDvR5NL7ECSqlMOKEJ2WcAxIz2GgiSgBEvb4UE5g8DHGsdizgdE8Huu7B3B4CAZOROAAnHf0rE50pauCnA7N75vLTLMohwJ52VtfEExp51APeadqpfOHuV40vFshTCF0tJlgokkzb/dnF0atOlt49NsdDIHu3mag+303KNIch6t8BsnwTLECNaXIt2+aZW6b7+ep2sm0fGHU9ncfh8EZQ1+wLlaqb9VawIwjCB5LmBwGb1sY4/zCy9Bf8LMp5VYNwrSqCBExKJvBQCkysNiplTIL/uYfhS6GICmpxLb9W7rEMLkr49DMmF/dSy8h3KQD4eiCCk7uNGrZ0uFZpzOr0X9cUulGNNdTiQNoQ2cDSsBdKp6IV0z0M6LQ0SqGXCUX/0MqmV2PCAlfo8Hoh8v7c2yvlm2QiS8Z6gXj/rzf8AmFQQJJO/2LAAAAAASUVORK5CYII=" alt="Logo" style="height: 18px;" class="logo">
       <span class="title">Trace</span>
@@ -51,50 +51,45 @@ EOT;
             foreach ($tabs as $k => $item) {
                 $html .= '<li>';
                 try {
-                    if (is_numeric($k)) {
-                        if (! empty($item['type']) && $item['type'] == 'trace') {
-                            // trace 数据跟踪信息打印
-                            $html .= $this->handleTraceData($item);
-                        } else {
-                            if (isset($item['label'])) {
-                                $html .= "<span class='json-label'>{$item['label']}</span>";
+                    if (is_array($item) && ! empty($item['type']) && $item['type'] == 'trace') {
+                        // trace 数据跟踪信息打印
+                        $html .= $this->handleTraceData($item);
+                    }else{
+                        // 左侧label
+                        if(is_array($item) && ! empty($item['label'])){
+                            $html .= "<span class='json-label'>{$item['label']}</span>";
+                        }elseif (is_string($k)){
+                            $html .= "<span class='json-label'>{$k}</span>";
+                        }
+
+                        // 中间 对象/数组/字符串
+                        if (!is_array($item)) {
+                            $class = is_numeric($k) ? 'json-label' : 'json-string-content';
+                            // 是标量 或者空
+                            if (is_scalar($item) || is_null($item)) {
+                                $html .= "<div class='{$class}'>".format_param($item).'</div>';
+                            } else {
+                                $html .= "<div class='{$class}'>".(ucfirst(gettype($item)).':'.get_class($item)).'</div>';
                             }
-                            if (is_array($item) && ! empty($item)) {
+                        }else{
+                            if(!empty(array_diff(array_keys($item), ['label', 'right']))){
                                 // $arrayString = json_encode($item, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
                                 $arrayString = json_encode($item, JSON_UNESCAPED_UNICODE);
                                 $html .= <<<EOT
-                    <div class="json-arrow-pre-wrapper">
-                      <span class="json-arrow" onclick="toggleJson(this)">▶</span>
-                      <pre class="json">{$arrayString}</pre>
-                    </div>
+    <div class="json-arrow-pre-wrapper">
+      <span class="json-arrow" onclick="toggleJson(this)">▶</span>
+      <pre class="json">{$arrayString}</pre>
+    </div>
 EOT;
-                            } else {
-                                $html .= "<span class='json-label'>".(is_array($item) ? 'array[]' : $item).'</span>';
+                            }elseif (empty($item)){
+                                $html .= "<span class='json-string-content'>array[]</span>";
                             }
                         }
-                    } else {
-                        $html .= "<span class='json-label'>{$k}</span>";
-                        if (is_array($item)) {
-                            $arrayString = empty($item) ? '[]' : json_encode($item, JSON_UNESCAPED_UNICODE);
-                            $html .= <<<EOT
-                    <div class="json-arrow-pre-wrapper">
-                      <span class="json-arrow" onclick="toggleJson(this)">▶</span>
-                      <pre class="json">{$arrayString}</pre>
-                    </div>
-EOT;
-                        } else {
-                            // 是标量 或者空
-                            if (is_scalar($item) || is_null($item)) {
-                                $html .= "<div class='json-string-content'>".$item.'</div>';
-                            } else {
-                                $html .= "<div class='json-string-content'>".(ucfirst(gettype($item)).':'.get_class($item)).'</div>';
-                            }
+
+                        // 右侧right
+                        if (is_array($item) && ! empty($item['right'])) {
+                            $html .= "<span class='json-right'>".$item['right'].'</span>';
                         }
-                    }
-                    if (is_array($item) && ! empty($item['right'])) {
-                        $html .= "<span class='json-right'>".$item['right'].'</span>';
-                    } else {
-                        $html .= "<span class='json-right'></span>";
                     }
                 } catch (Exception $e) {
                     $html .= "<div class='json-string-content'> Unrecognized data </div>";
@@ -129,7 +124,16 @@ EOT;
                     </div>
 EOT;
         } else {
-            $str .= "<div class='json-string-content'>".(is_array($data['var']) ? '[]' : $data['var']).'</div>';
+            if(is_array($data['var'])){
+                $str .= "<div class='json-string-content'>[]</div>";
+            }else{
+                // 是标量 或者空
+                if (is_scalar($data['var']) || is_null($data['var'])) {
+                    $str .= "<div class='json-string-content'>".format_param($data['var']).'</div>';
+                } else {
+                    $str .= "<div class='json-string-content'>".($data['var']).'</div>';
+                }
+            }
         }
 
         return $str;
