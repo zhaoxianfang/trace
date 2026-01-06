@@ -209,4 +209,4 @@
 #trace-tools-box .expanded { white-space: normal; }
 #trace-tools-box .expand-btn { color: #1890ff; cursor: pointer; margin-left: 4px; }
 #trace-tools-box .expand-btn::before { content: '▶'; font-size: 10px; margin-right: 2px; }
-#trace-tools-box .expanded .expand-btn::before { transform: rotate(90deg); }
+#trace-tools-box .expanded .expand-btn::before { /* transform: rotate(90deg); */ content: '▲'; }
