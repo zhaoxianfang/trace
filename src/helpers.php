@@ -5,18 +5,41 @@ use zxf\Trace\Handle;
 if (! function_exists('is_enable_trace')) {
     /**
      * 判断是否开启 trace 调试
+     *
+     * 注意：在非 HTTP 环境下（如命令行）返回 false
+     *
+     * @return bool true 表示启用 trace 调试
      */
     function is_enable_trace(): bool
     {
-        // 命令行下关闭 trace 调试
-        if(app()->runningInConsole()){
+        try {
+            // 命令行下关闭 trace 调试
+            if (app()->runningInConsole()) {
+                return false;
+            }
+
+            // [最高优先级]如果在 config 文件夹下的 trace.php 文件中配置了 enabled 为 true|false 则使用此配置
+            if (is_bool(config('trace.enabled'))) {
+                return config('trace.enabled');
+            }
+
+            // 检查 request 是否可用
+            if (! app()->bound('request')) {
+                return false;
+            }
+
+            $request = request();
+            if (! $request) {
+                return false;
+            }
+
+            return (! app()->environment('production') || config('app.debug'))
+                && ! $request->expectsJson()
+                && ! is_static_file($request->fullUrl(), true);
+        } catch (\Throwable $e) {
+            // 出现任何异常时返回 false，避免影响主流程
             return false;
         }
-        // [最高优先级]如果在 config 文件夹下的 trace.php 文件中配置了 enabled 为 true|false 则使用此配置
-        if(is_bool(config('trace.enabled'))){
-            return config('trace.enabled');
-        }
-        return (!app()->environment('production') || config('app.debug')) && !request()->expectsJson() && ! is_static_file(request()->fullUrl(), true);
     }
 }
 

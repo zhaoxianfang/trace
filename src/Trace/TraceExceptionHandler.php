@@ -26,6 +26,9 @@ class TraceExceptionHandler implements ExceptionHandler
 
     protected Handle $trace;
 
+    // 请求级别的异常处理标记，防止同一异常在单次请求中被多次处理
+    protected static array $requestExceptionHashes = [];
+
     public function __construct(ExceptionHandler $handler)
     {
         $this->handler = $handler;
@@ -34,10 +37,20 @@ class TraceExceptionHandler implements ExceptionHandler
     }
 
     /**
-     * 报告异常（增强异常报告逻辑）：负责记录异常（后台操作） ；
+     * 报告异常（增强异常报告逻辑）：负责记录异常（后台操作）
+     *
+     * 注意：使用请求级别的哈希跟踪，防止同一异常在单次请求中被多次报告
      */
     public function report(Throwable $e): void
     {
+        // 生成请求级别的异常哈希（包含请求 ID）
+        $requestExceptionHash = $this->getRequestExceptionHash($e);
+
+        // 检查此异常是否已经在当前请求中报告过
+        if (isset(self::$requestExceptionHashes[$requestExceptionHash])) {
+            return;
+        }
+
         // 初始化错误信息
         $this->trace->initError($e);
 
@@ -51,8 +64,11 @@ class TraceExceptionHandler implements ExceptionHandler
         // 防止内存泄漏，限制存储的异常数量
         $this->cleanupReportedExceptions();
 
-        // 标记为已报告
+        // 标记为已报告（全局级别）
         $this->reportedHashes[$exceptionHash] = microtime(true);
+
+        // 标记为已在当前请求中报告（请求级别）
+        self::$requestExceptionHashes[$requestExceptionHash] = true;
 
         $this->lastException = $e;
 
@@ -60,8 +76,20 @@ class TraceExceptionHandler implements ExceptionHandler
             // 执行跟踪相关的预处理
             $this->beforeReport($e);
 
-            // 记录日志
-            $this->trace->writeLog($e);
+            // 记录日志（检查是否已经记录过，防止重复记录）
+            // 注意：检查 request 是否可用，避免在非 HTTP 环境下出错
+            $logAlreadyRecorded = false;
+            try {
+                if (app()->bound('request') && request()) {
+                    $logAlreadyRecorded = request()->has('log_already_recorded');
+                }
+            } catch (\Throwable) {
+                // 静默处理，使用默认值
+            }
+
+            if (! $logAlreadyRecorded) {
+                $this->trace->writeLog($e);
+            }
 
             // 调用原始 report 方法
             $this->handler->report($e);
@@ -96,41 +124,55 @@ class TraceExceptionHandler implements ExceptionHandler
         }
 
         // 运行自定义闭包回调
-        if (! empty($callRes = $this->trace->runCallbackHandle($e)) && $callRes instanceof Response) {
-            return $callRes;
+        try {
+            $callRes = $this->trace->runCallbackHandle($e);
+            if (! empty($callRes) && $callRes instanceof Response) {
+                $this->rendering = false;
+                return $callRes;
+            }
+        } catch (Throwable $err) {
+            // 忽略回调中的错误
         }
 
         try {
             // 如果模块下定义了自定义的异常接管类 Handler，则交由模块下的异常类自己处理
             if ($this->trace->hasModuleCustomException()) {
-                return $this->trace->handleModulesCustomException($e, $request);
+                $moduleResponse = $this->trace->handleModulesCustomException($e, $request);
+                if ($moduleResponse) {
+                    $this->rendering = false;
+                    return $moduleResponse;
+                }
             }
-        } catch (Throwable $e) {
-            // 可能自定义接管的异常类也有异常
+        } catch (Throwable $err) {
+            // 可能自定义接管的异常类也有异常，忽略并继续处理
         }
 
         // 调试模式
         if (config('app.debug') || app()->runningInConsole()) {
-            return $this->trace->debug($e);
-
-            // try {
-            //     $response = $this->handler->render($request, $e);
-            //     if (app()->runningInConsole()) {
-            //         return $response;
-            //     }
-
-            //     // 只在最终渲染时处理跟踪信息
-            //     return $this->pringTrace($request, $response);
-            // } finally {
-            //     $this->rendering = false;
-            // }
+            try {
+                $response = $this->trace->debug($e);
+                $this->rendering = false;
+                return $response;
+            } catch (Throwable $err) {
+                // 如果调试渲染失败，使用默认渲染
+                $this->rendering = false;
+                return $this->handler->render($request, $e);
+            }
         }
 
         // 判断路径 : 不是get的api 或 json 请求
-        if (($request->is('api/*') || ! $request->isMethod('get')) || $request->expectsJson()) {
-            return $this->trace->respJson($this->trace::$message, $this->trace::$code)->send();
-        } else {
-            return $this->trace->respView($this->trace::$message, $this->trace::$code)->send();
+        try {
+            if (($request->is('api/*') || ! $request->isMethod('get')) || $request->expectsJson()) {
+                $response = $this->trace->respJson($this->trace::$message, $this->trace::$code)->send();
+            } else {
+                $response = $this->trace->respView($this->trace::$message, $this->trace::$code)->send();
+            }
+            $this->rendering = false;
+            return $response;
+        } catch (Throwable $err) {
+            // 如果自定义渲染失败，使用默认渲染
+            $this->rendering = false;
+            return $this->handler->render($request, $e);
         }
     }
 
@@ -199,7 +241,9 @@ class TraceExceptionHandler implements ExceptionHandler
     }
 
     /**
-     * 生成异常的唯一哈希
+     * 生成异常的唯一哈希（全局级别）
+     *
+     * 用于跨请求的去重检查
      */
     protected function getExceptionHash(Throwable $e): string
     {
@@ -209,6 +253,30 @@ class TraceExceptionHandler implements ExceptionHandler
             $e->getLine().
             $this->trace::$message.
             $this->trace::$code
+        );
+    }
+
+    /**
+     * 生成请求级别的异常哈希
+     *
+     * 包含请求 ID，确保同一异常在单次请求中只被处理一次
+     *
+     * @param  Throwable  $e  异常对象
+     * @return string 请求级别的哈希值
+     */
+    protected function getRequestExceptionHash(Throwable $e): string
+    {
+        // 通过反射获取 Handle 的 requestId 属性
+        $reflectionClass = new \ReflectionClass($this->trace);
+        $requestIdProperty = $reflectionClass->getProperty('requestId');
+        $requestIdProperty->setAccessible(true);
+        $requestId = $requestIdProperty->getValue($this->trace);
+
+        return md5(
+            get_class($e).
+            $e->getFile().
+            $e->getLine().
+            $requestId  // 包含请求 ID，确保请求级别的去重
         );
     }
 
@@ -268,5 +336,30 @@ class TraceExceptionHandler implements ExceptionHandler
         // 清空大数组，帮助GC
         $this->reportedHashes = [];
         $this->lastException = null;
+
+        // 清理请求级别的异常哈希（当请求结束时）
+        // 注意：在 Laravel 11+ 中，可以使用 Request::macro() 或其他机制来清理
+        // 这里提供基础清理，更完善的清理需要结合中间件或请求生命周期钩子
+        self::$requestExceptionHashes = [];
+    }
+
+    /**
+     * 清理请求级别的异常哈希
+     *
+     * 此方法应在请求结束时调用（例如在中间件的 terminate 方法中）
+     * 以清理当前请求的异常记录，避免内存累积
+     *
+     * @param  string  $requestId  请求 ID
+     */
+    public static function clearRequestExceptions(string $requestId): void
+    {
+        // 清理包含特定请求 ID 的所有异常哈希
+        self::$requestExceptionHashes = array_filter(
+            self::$requestExceptionHashes,
+            function ($hash) use ($requestId) {
+                // 保留不包含当前请求 ID 的哈希
+                return ! str_contains($hash, $requestId);
+            }
+        );
     }
 }

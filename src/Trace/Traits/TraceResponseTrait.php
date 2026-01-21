@@ -4,6 +4,8 @@ namespace zxf\Trace\Traits;
 
 use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 /**
  * 把trace调试数据渲染到响应的html中
@@ -141,8 +143,12 @@ EOT;
 
     /**
      * 把trace数据渲染到响应的html中
+     *
+     * @param  Request  $request  HTTP 请求对象
+     * @param  SymfonyResponse  $response  HTTP 响应对象（支持多种响应类型）
+     * @return SymfonyResponse 返回处理后的响应对象
      */
-    public function renderTraceStyleAndScript(Request $request, $response): mixed
+    public function renderTraceStyleAndScript(Request $request, SymfonyResponse $response): SymfonyResponse
     {
         if (! is_enable_trace()) {
             return $response;
@@ -154,38 +160,95 @@ EOT;
         }
 
         $content = $response->getContent();
-        if (! $request->isMethod('get')) {
-            try {
-                $content = json_decode($content, true);
-            } catch (Exception $e) {
-            }
-            $content['_debugger'] = $traceContent;
-            $content = json_encode($content, JSON_UNESCAPED_UNICODE);
-            $response->setContent($content);
-            $response->headers->remove('Content-Length');
 
+        // 检查内容是否为空
+        if (empty($content)) {
             return $response;
         }
 
-        $cssRoute = preg_replace('/\Ahttps?:/', '', route('zxf.trace.trace.css'));
-        $jsRoute = preg_replace('/\Ahttps?:/', '', route('zxf.trace.trace.js'));
-
-        $style = "<link rel='stylesheet' type='text/css' property='stylesheet' href='{$cssRoute}'  data-turbolinks-eval='false' data-turbo-eval='false'>";
-        $script = "<script src='{$jsRoute}' type='text/javascript'  data-turbolinks-eval='false' data-turbo-eval='false' ></script>";
-
-        $posCss = strripos($content, '</head>');
-        if ($posCss !== false) {
-            $content = substr($content, 0, $posCss).PHP_EOL.$style.PHP_EOL.substr($content, $posCss);
-        } else {
-            $content = $style.PHP_EOL.$content;
+        // 处理非 GET 请求
+        if (! $request->isMethod('get')) {
+            try {
+                $decodedContent = json_decode($content, true);
+                if (is_array($decodedContent)) {
+                    $decodedContent['_debugger'] = $traceContent;
+                    $content = json_encode($decodedContent, JSON_UNESCAPED_UNICODE);
+                    $response->setContent($content);
+                    $response->headers->remove('Content-Length');
+                }
+            } catch (Exception) {
+                // JSON 解析失败，不处理
+            }
+            return $response;
         }
 
-        $posJs = strripos($content, '</body>');
-        if ($posJs !== false) {
-            $content = substr($content, 0, $posJs).PHP_EOL.$traceContent.PHP_EOL.$script.substr($content, $posJs);
-            // set_protected_attr($response, 'content', $traceContent);
+        // 安全获取路由 URL
+        try {
+            $cssRoute = route('zxf.trace.trace.css');
+            $jsRoute = route('zxf.trace.trace.js');
+        } catch (\Exception) {
+            // 路由不存在，使用备用路径
+            $cssRoute = '/zxf/trace/assets/trace.css';
+            $jsRoute = '/zxf/trace/assets/trace.js';
+        }
+
+        // 移除协议部分，使用协议相对 URL
+        $cssRoute = preg_replace('/\Ahttps?:/', '', $cssRoute);
+        $jsRoute = preg_replace('/\Ahttps?:/', '', $jsRoute);
+
+        $style = "<link rel='stylesheet' type='text/css' property='stylesheet' href='{$cssRoute}' data-turbolinks-eval='false' data-turbo-eval='false'>";
+        $script = "<script src='{$jsRoute}' type='text/javascript' data-turbolinks-eval='false' data-turbo-eval='false'></script>";
+
+        // 尝试找到 </head> 标签的位置（不区分大小写）
+        $posCss = strripos($content, '</head>');
+        $posHeadCase = strripos($content, '</HEAD>');
+
+        // 使用找到的位置（区分大小写优先）
+        $insertCssPos = max($posCss, $posHeadCase);
+
+        if ($insertCssPos !== false) {
+            $content = substr($content, 0, $insertCssPos).PHP_EOL.$style.PHP_EOL.substr($content, $insertCssPos);
         } else {
-            $content = $content.PHP_EOL.$traceContent.PHP_EOL.$script;
+            // 如果没有找到 </head> 标签，尝试其他方案
+            // 1. 尝试在 <head> 标签后插入
+            $posHeadStart = stripos($content, '<head');
+            if ($posHeadStart !== false) {
+                $posHeadEnd = stripos($content, '>', $posHeadStart);
+                if ($posHeadEnd !== false) {
+                    $content = substr($content, 0, $posHeadEnd + 1).PHP_EOL.$style.PHP_EOL.substr($content, $posHeadEnd + 1);
+                } else {
+                    $content = $style.PHP_EOL.$content;
+                }
+            } else {
+                // 2. 如果没有找到任何 head 标签，在文档开头插入
+                $content = $style.PHP_EOL.$content;
+            }
+        }
+
+        // 尝试找到 </body> 标签的位置（不区分大小写）
+        $posJs = strripos($content, '</body>');
+        $posBodyCase = strripos($content, '</BODY>');
+
+        // 使用找到的位置（区分大小写优先）
+        $insertJsPos = max($posJs, $posBodyCase);
+
+        if ($insertJsPos !== false) {
+            $content = substr($content, 0, $insertJsPos).PHP_EOL.$traceContent.PHP_EOL.$script.substr($content, $insertJsPos);
+        } else {
+            // 如果没有找到 </body> 标签，尝试其他方案
+            // 1. 尝试在 <body> 标签前插入
+            $posBodyStart = stripos($content, '<body');
+            if ($posBodyStart !== false) {
+                $posBodyEnd = stripos($content, '>', $posBodyStart);
+                if ($posBodyEnd !== false) {
+                    $content = substr($content, 0, $posBodyEnd + 1).PHP_EOL.$traceContent.PHP_EOL.$script.PHP_EOL.substr($content, $posBodyEnd + 1);
+                } else {
+                    $content = $content.PHP_EOL.$traceContent.PHP_EOL.$script;
+                }
+            } else {
+                // 2. 如果没有找到任何 body 标签，在文档末尾插入
+                $content = $content.PHP_EOL.$traceContent.PHP_EOL.$script;
+            }
         }
 
         $response->setContent($content);

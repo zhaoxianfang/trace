@@ -36,6 +36,12 @@ trait ExceptionTrait
 
     public function initError(Throwable $e): void
     {
+        // 重置所有静态状态，确保每次异常处理都是干净的
+        self::$initErr = false;
+        self::$isSysErr = false;
+        self::$isUserErr = false;
+        self::$content = [];
+
         self::$initErr = true;
         self::$isSysErr = self::isSystemException($e);
         $this->setStatusCode($e);
@@ -43,21 +49,39 @@ trait ExceptionTrait
         $this->setError($e);
     }
 
-    // 写入错误日志
+    /**
+     * 写入错误日志
+     *
+     * 注意：检查 request 是否可用，避免在非 HTTP 环境下出错
+     *
+     * @param  Throwable  $e  异常对象
+     */
     public function writeLog(Throwable $e): void
     {
         if (! self::$initErr) {
             $this->initError($e);
         }
         $message = self::$isSysErr ? $e->getMessage() : self::$message;
-        // 标记日志已经被记录过了
-        request()->merge(['log_already_recorded' => true]);
+
+        // 标记日志已经被记录过了（仅在 HTTP 环境下）
+        try {
+            if (app()->bound('request') && request()) {
+                request()->merge(['log_already_recorded' => true]);
+            }
+        } catch (\Throwable) {
+            // 静默处理，不影响日志记录
+        }
+
         // 标记日志
         try {
             Log::error('[异常]:'.$message, self::$content);
         } catch (Throwable $err) {
             // 写入本地文件日志
-            Log::channel('stack')->error('[异常]:'.$message, self::$content);
+            try {
+                Log::channel('stack')->error('[异常]:'.$message, self::$content);
+            } catch (\Throwable) {
+                // 静默处理，避免无限循环
+            }
         }
     }
 
@@ -229,6 +253,8 @@ trait ExceptionTrait
     /**
      * 获取异常代码片段
      *
+     * 注意：添加异常处理，确保文件操作安全
+     *
      * @return false|string
      */
     private function getExceptionContent(Throwable $e): false|string
@@ -242,35 +268,48 @@ trait ExceptionTrait
             return false;
         }
 
+        // 检查文件是否存在且可读
+        if (! file_exists($filePath) || ! is_readable($filePath)) {
+            return false;
+        }
+
         // 初始化结果数组和当前行计数器
         $exceptionCode = '';
         $currentLine = 0;
-
-        // 打开文件
-        $file = fopen($filePath, 'r');
-        if ($file === false) {
-            return false;
-        }
+        $file = null;
         $errLine = $e->getLine();
 
-        // 循环读取每一行直到到达指定行范围或文件结束
-        while (($line = fgets($file)) !== false) {
-            $currentLine++;
-            if ($currentLine >= $startLine && $currentLine <= $endLine) {
-                // 去除行尾的换行符，并将该行添加到结果数组中
-                if ($currentLine == $errLine) {
-                    $exceptionCode .= '<span class="error-line-code" style="color: red;">'.$currentLine.'|'.$line.'</span>';
-                } else {
-                    $exceptionCode .= $currentLine.'|'.$line;
+        try {
+            // 打开文件
+            $file = fopen($filePath, 'r');
+            if ($file === false) {
+                return false;
+            }
+
+            // 循环读取每一行直到到达指定行范围或文件结束
+            while (($line = fgets($file)) !== false) {
+                $currentLine++;
+                if ($currentLine >= $startLine && $currentLine <= $endLine) {
+                    // 去除行尾的换行符，并将该行添加到结果数组中
+                    if ($currentLine == $errLine) {
+                        $exceptionCode .= '<span class="error-line-code" style="color: red;">'.$currentLine.'|'.$line.'</span>';
+                    } else {
+                        $exceptionCode .= $currentLine.'|'.$line;
+                    }
+                }
+                if ($currentLine > $endLine) {
+                    break; // 如果已经超过了所需的最后一行，则停止读取
                 }
             }
-            if ($currentLine > $endLine) {
-                break; // 如果已经超过了所需的最后一行，则停止读取
+        } catch (\Throwable) {
+            // 文件操作失败，返回 false
+            return false;
+        } finally {
+            // 确保文件句柄被关闭
+            if ($file !== null && is_resource($file)) {
+                fclose($file);
             }
         }
-
-        // 关闭文件
-        fclose($file);
 
         // 返回结果数组
         return $exceptionCode;

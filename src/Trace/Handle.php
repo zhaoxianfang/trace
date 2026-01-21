@@ -64,6 +64,9 @@ class Handle
 
     protected static array $modelList = [];
 
+    // 请求 ID，用于区分不同请求
+    protected ?string $requestId = null;
+
     protected array $messages = [];
 
     /** @var Request */
@@ -72,15 +75,31 @@ class Handle
     /** @var Response */
     protected $response;
 
-    // 实例化并传入参数
+    // 全局标记：事件监听器是否已注册
+    protected static bool $eventListenersRegistered = false;
+
+    // 全局标记：当前正在处理的请求 ID
+    protected static ?string $currentRequestId = null;
+
+    // 请求计数器，用于追踪请求次数
+    protected static int $requestCounter = 0;
 
     /**
+     * 实例化并初始化请求级别状态
+     *
      * @param  Application  $app
      *
      * @throws BindingResolutionException
      */
     public function __construct(mixed $app = null, array $config = [])
     {
+        // 生成唯一的请求 ID
+        $this->requestId = uniqid('trace_', true);
+
+        // 更新全局当前请求 ID
+        self::$currentRequestId = $this->requestId;
+        self::$requestCounter++;
+
         if (is_enable_trace()) {
             $this->startMemory = memory_get_usage();
 
@@ -101,13 +120,24 @@ class Handle
 
     /**
      * 监听模型事件
+     *
+     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
      */
     public function listenModelEvent(): void
     {
+        // 检查是否已经注册过事件监听器
+        if (self::$eventListenersRegistered) {
+            return;
+        }
+
         $events = ['retrieved', 'creating', 'created', 'updating', 'updated', 'saving', 'saved', 'deleting', 'deleted', 'restoring', 'restored', 'replicating'];
+
         foreach ($events as $event) {
             Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
-                $this->logModelEvent($listenString, $model, $event);
+                // 只在当前请求 ID 匹配时才记录
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->logModelEvent($listenString, $model, $event);
+                }
             });
         }
     }
@@ -115,16 +145,29 @@ class Handle
     /**
      * 监听 SQL事件
      *
+     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
+     *
      * @return void
      */
     protected function listenSql(): void
     {
-        // DB::enableQueryLog();
+        // 检查是否已经注册过事件监听器
+        if (self::$eventListenersRegistered) {
+            return;
+        }
+
         $events = isset($this->app['events']) ? $this->app['events'] : null;
+        if (! $events) {
+            return;
+        }
+
         try {
             // 监听SQL执行
             $events->listen(function (QueryExecuted $query) {
-                $this->addQuery($query);
+                // 只在当前请求 ID 匹配时才记录
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addQuery($query);
+                }
             });
         } catch (Exception $e) {
         }
@@ -132,16 +175,22 @@ class Handle
         try {
             // 监听事务开始
             $events->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($transaction) {
-                $this->addTransactionQuery('Begin Transaction', $transaction->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Begin Transaction', $transaction->connection);
+                }
             });
             // 监听事务提交
             $events->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($transaction) {
-                $this->addTransactionQuery('Commit Transaction', $transaction->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Commit Transaction', $transaction->connection);
+                }
             });
 
             // 监听事务回滚
             $events->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($transaction) {
-                $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
+                }
             });
 
             $connectionEvents = [
@@ -151,15 +200,22 @@ class Handle
             ];
             foreach ($connectionEvents as $event => $eventName) {
                 $events->listen('connection.*.'.$event, function ($event, $params) use ($eventName) {
-                    $this->addTransactionQuery($eventName, $params[0]);
+                    if (self::$currentRequestId === $this->requestId) {
+                        $this->addTransactionQuery($eventName, $params[0]);
+                    }
                 });
             }
             // 监听连接创建
             $events->listen(function (\Illuminate\Database\Events\ConnectionEstablished $event) {
-                $this->addTransactionQuery('Connection Established', $event->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Connection Established', $event->connection);
+                }
             });
         } catch (Exception $e) {
         }
+
+        // 标记事件监听器已注册
+        self::$eventListenersRegistered = true;
     }
 
     /**
@@ -204,27 +260,61 @@ class Handle
         ];
     }
 
+    /**
+     * 记录模型事件
+     *
+     * 注意：使用请求 ID 进行数据隔离，防止不同请求的数据混淆
+     *
+     * @param  string  $listenString  监听字符串（如 "eloquent.retrieved:App\Models\User"）
+     * @param  mixed  $model  模型实例或模型数组
+     * @param  string  $event  事件名称（如 "retrieved", "created"）
+     */
     protected function logModelEvent($listenString, $model, $event): void
     {
+        // 检查当前请求 ID 是否匹配，防止跨请求事件混入
+        if (self::$currentRequestId !== $this->requestId) {
+            return;
+        }
+
         $model = isset($model[0]) ? $model[0] : $model;
+
         // 使用: 分割 $model , 获取模型名称
         $modelName = trim(explode(':', $listenString)[1]);
 
         $modelId = $model->getKey();
 
-        self::$modelList[] = [
+        // 使用请求 ID 作为键，避免不同请求的数据混淆
+        if (! isset(self::$modelList[$this->requestId])) {
+            self::$modelList[$this->requestId] = [];
+        }
+
+        self::$modelList[$this->requestId][] = [
             'model' => $modelName,
             'id' => $modelId,
             'event' => $event,
         ];
     }
 
+    /**
+     * 输出 Trace 调试信息
+     *
+     * 注意：添加请求级别检查，确保只处理当前请求的数据
+     *
+     * @param  Response  $response  HTTP 响应对象
+     * @return string Trace 调试 HTML 内容（如果需要渲染）
+     */
     public function output($response): string
     {
         if (! is_enable_trace()) {
             // 运行在命令行下
             return '';
         }
+
+        // 检查当前请求 ID 是否匹配
+        if (self::$currentRequestId !== $this->requestId) {
+            return '';
+        }
+
         $this->response = $response;
 
         $exception = [];
@@ -277,7 +367,8 @@ class Handle
         }
 
         // 不是ajax请求的GET请求 && 不是生产环境 的直接在页面渲染
-        if ($this->request->isMethod('get') && ! request()->expectsJson() && ! ($response instanceof \Illuminate\Http\JsonResponse) && ! app()->environment('production')) {
+        // 注意：使用 $this->request 而不是 request()，避免全局 request 可能不可用
+        if ($this->request->isMethod('get') && ! $this->request->expectsJson() && ! ($response instanceof \Illuminate\Http\JsonResponse) && ! $this->app->environment('production')) {
             return $this->randerPage($trace);
         }
 
@@ -297,20 +388,36 @@ class Handle
         return [$message.(!empty($tips)? ' <span style="font-size: 12px;color: #aaa;">提示: '.$tips.'</span>' : '') ];
     }
 
+    /**
+     * 获取模型列表并清理数据
+     *
+     * 注意：在获取数据后立即清理当前请求的模型数据，避免内存累积
+     *
+     * @return array 模型使用统计列表
+     */
     private function getModelList(): array
     {
         $data = [];
-        foreach (self::$modelList as $model) {
-            if (empty($data[$model['model'].':'.$model['id']])) {
-                $data[$model['model'].':'.$model['id']] = 1;
+
+        // 只获取当前请求的模型列表
+        $currentModels = self::$modelList[$this->requestId] ?? [];
+
+        foreach ($currentModels as $model) {
+            $key = $model['model'].':'.$model['id'];
+            if (empty($data[$key])) {
+                $data[$key] = 1;
             } else {
-                $data[$model['model'].':'.$model['id']] += 1;
+                $data[$key] += 1;
             }
         }
+
         $list = [];
         foreach ($data as $model => $num) {
             $list[] = $model.' 「'.$num.'次」';
         }
+
+        // 清理当前请求的数据，避免内存泄漏
+        unset(self::$modelList[$this->requestId]);
 
         return $list;
     }
