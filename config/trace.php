@@ -23,7 +23,7 @@ return [
      *
      * 默认: Modules
      */
-    'namespace'=>'Modules',
+    'namespace'=>config('modules.namespace', 'Modules'),
 
     /**
      * 自定义处理 Trace 调试产生的数据
