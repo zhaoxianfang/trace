@@ -79,17 +79,17 @@ trait ExceptionTrait
             // 静默处理，不影响日志记录
         }
 
-        // 标记日志
-        try {
-            Log::error('[异常]:'.$message, self::$content);
-        } catch (Throwable $err) {
-            // 写入本地文件日志
-            try {
-                Log::channel('stack')->error('[异常]:'.$message, self::$content);
-            } catch (\Throwable) {
-                // 静默处理，避免无限循环
-            }
-        }
+        // 记录异常日志
+        // try {
+        //     Log::error('[异常]:'.$message, self::$content);
+        // } catch (Throwable $err) {
+        //     // 写入本地文件日志
+        //     try {
+        //         Log::channel('stack')->error('[异常]:'.$message, self::$content);
+        //     } catch (\Throwable) {
+        //         // 静默处理，避免无限循环
+        //     }
+        // }
     }
 
     /**
