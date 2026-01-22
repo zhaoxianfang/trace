@@ -121,12 +121,13 @@ if (! function_exists('size_format')) {
      */
     function size_format(int $size, int $dec = 2, bool $binary = false): string
     {
+        // 处理边界情况
         if ($size < 0) {
-            throw new InvalidArgumentException('文件大小不能为负数');
+            return 'Invalid';
         }
 
         if ($size === 0) {
-            return '0B';
+            return '0 B';
         }
 
         $base = $binary ? 1024 : 1000;
@@ -142,7 +143,10 @@ if (! function_exists('size_format')) {
             $pos++;
         }
 
-        return round($formattedSize, $dec) . $units[$pos];
+        // 确保精度不丢失
+        $formattedSize = round($formattedSize, $dec);
+
+        return number_format($formattedSize, $dec, '.', '') . ' ' . $units[$pos];
     }
 }
 

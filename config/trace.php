@@ -15,7 +15,7 @@ return [
      * 是否开启 trace 调试功能
      * 默认: true
      */
-    'enabled'=>true,
+    'enabled' => true,
 
     /**
      * 使用自定义处理的命名空间，例如在 App\Exceptions\Handler->render 中自定义处理 Trace 检测到的异常
@@ -23,7 +23,7 @@ return [
      *
      * 默认: Modules
      */
-    'namespace'=>config('modules.namespace', 'Modules'),
+    'namespace' => 'Modules',
 
     /**
      * 自定义处理 Trace 调试产生的数据
@@ -43,7 +43,7 @@ return [
      *        }
      *    }
      */
-    'end_handle_class'=>'',
+    'end_handle_class' => '',
 
     /*
     |--------------------------------------------------------------------------
@@ -60,5 +60,4 @@ return [
     |
     */
     'editor' => 'phpstorm',
-
 ];

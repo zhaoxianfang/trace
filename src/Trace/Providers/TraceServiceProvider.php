@@ -79,13 +79,27 @@ class TraceServiceProvider extends ServiceProvider
         // 设置别名，可以通过 app('trace') 访问
         $this->app->alias(Handle::class, 'trace');
 
-        // 注册自定义异常处理器为单例
-        // 方式：单次注册，接管 Laravel 默认的异常处理
-        // 注意：Laravel 11+ 中，用户可以在 bootstrap/app.php 的 withExceptions() 中进一步配置
-        // 这不会导致重复处理，因为 TraceExceptionHandler 已经接管了异常处理流程
+        // Laravel 11+ 使用新的异常处理机制
+        // 通过 withExceptions() 方法配置，而不是直接替换 ExceptionHandler
+        // 这里仍然提供 TraceExceptionHandler 以便兼容旧版本，但主要依赖 CustomExceptionHandler
         $this->app->singleton(ExceptionHandler::class, function ($app) {
-            // 获取 Laravel 原始的异常处理器
-            $originalHandler = $app->make(\Illuminate\Foundation\Exceptions\Handler::class);
+            // 尝试获取 Laravel 原始的异常处理器
+            try {
+                $originalHandler = $app->make(\Illuminate\Foundation\Exceptions\Handler::class);
+            } catch (\Throwable $e) {
+                // Laravel 11+ 可能不使用传统的 Handler
+                // 返回一个最小实现的处理器
+                $originalHandler = new class implements \Illuminate\Contracts\Debug\ExceptionHandler {
+                    public function report(\Throwable $e): void {}
+                    public function render($request, \Throwable $e): \Symfony\Component\HttpFoundation\Response {
+                        return response()->json(['error' => $e->getMessage()], 500);
+                    }
+                    public function renderForConsole($output, \Throwable $e): void {}
+                    public function shouldReport(\Throwable $e): bool {
+                        return true;
+                    }
+                };
+            }
 
             // 返回包装后的 Trace 异常处理器
             return new TraceExceptionHandler($originalHandler);

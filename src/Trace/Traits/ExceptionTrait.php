@@ -33,6 +33,7 @@ trait ExceptionTrait
 
     // 错误信息
     public static array $content = [];
+    public static Throwable $errObj;
 
     public function initError(Throwable $e): void
     {
@@ -47,6 +48,12 @@ trait ExceptionTrait
         $this->setStatusCode($e);
         $this->setErrorMessage($e);
         $this->setError($e);
+
+        // 存储当前异常信息，供 Handle::output() 方法使用
+        // 注意：使用 $this->currentException 而不是静态变量，以支持多实例
+        if (property_exists($this, 'currentException')) {
+            $this->currentException = $e;
+        }
     }
 
     /**
@@ -139,12 +146,14 @@ trait ExceptionTrait
         }
         self::$content = [
             'message:' => self::$message,   // 返回用户自定义的异常信息
-            'code:' => self::$code,      // 返回用户自定义的异常代码
-            'file:' => $e->getFile(),      // 返回发生异常的PHP程序文件名
-            'line:' => $e->getLine(),        // 返回发生异常的代码所在行的行号
-            // "trace:"     => $err->getTrace(),      //返回发生异常的传递路线
-            // "传递路线String" => $err->getTraceAsString(),//返回发生异常的传递路线
+            'code:' => self::$code,         // 返回用户自定义的异常代码
+            'file:' => $e->getFile(),       // 返回发生异常的PHP程序文件名
+            'line:' => $e->getLine(),       // 返回发生异常的代码所在行的行号
+            // "trace:"     => $e->getTrace(),      //返回发生异常的传递路线
+            // "传递路线String" => $e->getTraceAsString(),//返回发生异常的传递路线
         ];
+
+        self::$errObj = $e; // 记录整个异常信息
 
         return self::$content;
     }

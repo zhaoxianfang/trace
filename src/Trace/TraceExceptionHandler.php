@@ -33,7 +33,12 @@ class TraceExceptionHandler implements ExceptionHandler
     {
         $this->handler = $handler;
 
-        $this->trace = app('trace');
+        try {
+            $this->trace = app('trace');
+        } catch (\Throwable $e) {
+            // 如果 trace 服务不可用，创建一个最小实例
+            $this->trace = new Handle(app());
+        }
     }
 
     /**
@@ -43,64 +48,81 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     public function report(Throwable $e): void
     {
-        // 生成请求级别的异常哈希（包含请求 ID）
-        $requestExceptionHash = $this->getRequestExceptionHash($e);
-
-        // 检查此异常是否已经在当前请求中报告过
-        if (isset(self::$requestExceptionHashes[$requestExceptionHash])) {
-            return;
-        }
-
-        // 初始化错误信息
-        $this->trace->initError($e);
-
-        $exceptionHash = $this->getExceptionHash($e);
-
-        // 定义为不需要被报告的异常 || 检查是否已经报告过
-        if ($this->shouldntReport($e) || $this->hasReported($exceptionHash)) {
-            return;
-        }
-
-        // 防止内存泄漏，限制存储的异常数量
-        $this->cleanupReportedExceptions();
-
-        // 标记为已报告（全局级别）
-        $this->reportedHashes[$exceptionHash] = microtime(true);
-
-        // 标记为已在当前请求中报告（请求级别）
-        self::$requestExceptionHashes[$requestExceptionHash] = true;
-
-        $this->lastException = $e;
-
         try {
-            // 执行跟踪相关的预处理
-            $this->beforeReport($e);
+            // 生成请求级别的异常哈希（包含请求 ID）
+            $requestExceptionHash = $this->getRequestExceptionHash($e);
 
-            // 记录日志（检查是否已经记录过，防止重复记录）
-            // 注意：检查 request 是否可用，避免在非 HTTP 环境下出错
-            $logAlreadyRecorded = false;
+            // 检查此异常是否已经在当前请求中报告过
+            if (isset(self::$requestExceptionHashes[$requestExceptionHash])) {
+                return;
+            }
+
+            // 初始化错误信息
             try {
-                if (app()->bound('request') && request()) {
-                    $logAlreadyRecorded = request()->has('log_already_recorded');
+                $this->trace->initError($e);
+            } catch (\Throwable $initError) {
+                // 如果初始化失败，记录错误但不中断流程
+                error_log('[Trace] Failed to initialize error: '.$initError->getMessage());
+            }
+
+            $exceptionHash = $this->getExceptionHash($e);
+
+            // 定义为不需要被报告的异常 || 检查是否已经报告过
+            if ($this->shouldntReport($e) || $this->hasReported($exceptionHash)) {
+                return;
+            }
+
+            // 防止内存泄漏，限制存储的异常数量
+            $this->cleanupReportedExceptions();
+
+            // 标记为已报告（全局级别）
+            $this->reportedHashes[$exceptionHash] = microtime(true);
+
+            // 标记为已在当前请求中报告（请求级别）
+            self::$requestExceptionHashes[$requestExceptionHash] = true;
+
+            $this->lastException = $e;
+
+            try {
+                // 执行跟踪相关的预处理
+                $this->beforeReport($e);
+
+                // 记录日志（检查是否已经记录过，防止重复记录）
+                // 注意：检查 request 是否可用，避免在非 HTTP 环境下出错
+                $logAlreadyRecorded = false;
+                try {
+                    if (app()->bound('request') && request()) {
+                        $logAlreadyRecorded = request()->has('log_already_recorded');
+                    }
+                } catch (\Throwable) {
+                    // 静默处理，使用默认值
                 }
-            } catch (\Throwable) {
-                // 静默处理，使用默认值
+
+                if (! $logAlreadyRecorded) {
+                    $this->trace->writeLog($e);
+                }
+
+                // 调用原始 report 方法
+                if (method_exists($this->handler, 'report')) {
+                    $this->handler->report($e);
+                }
+
+                // 执行报告后的处理
+                $this->afterReport($e);
+
+            } catch (Throwable $reportError) {
+                // 避免报告过程中的异常导致无限循环
+                // 记录日志
+                try {
+                    $this->trace->writeLog($reportError);
+                } catch (\Throwable) {
+                    // 最后的保底，直接使用 error_log
+                    error_log('[Trace] Exception in reporting: '.$reportError->getMessage());
+                }
             }
-
-            if (! $logAlreadyRecorded) {
-                $this->trace->writeLog($e);
-            }
-
-            // 调用原始 report 方法
-            $this->handler->report($e);
-
-            // 执行报告后的处理
-            $this->afterReport($e);
-
-        } catch (Throwable $reportError) {
-            // 避免报告过程中的异常导致无限循环
-            // 记录日志
-            $this->trace->writeLog($reportError);
+        } catch (Throwable $criticalError) {
+            // 最外层的异常捕获，确保不会导致应用崩溃
+            error_log('[Trace] Critical error in report(): '.$criticalError->getMessage());
         }
     }
 

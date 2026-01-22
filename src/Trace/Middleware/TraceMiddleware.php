@@ -1,6 +1,6 @@
 <?php
 
-namespace  zxf\Trace\Middleware;
+namespace zxf\Trace\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use zxf\Trace\Handle;
+use zxf\Trace\TraceExceptionHandler;
 
 /**
  * Trace 调试中间件

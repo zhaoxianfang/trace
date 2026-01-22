@@ -16,6 +16,7 @@ use ParseError;
 use ReflectionException;
 use ReflectionFunction;
 use ReflectionMethod;
+use Throwable;
 use zxf\Trace\Traits\AppEndTrait;
 use zxf\Trace\Traits\ExceptionCodeTrait;
 use zxf\Trace\Traits\ExceptionCustomCallbackTrait;
@@ -68,6 +69,9 @@ class Handle
     protected ?string $requestId = null;
 
     protected array $messages = [];
+
+    // 存储当前请求的异常信息
+    protected ?Throwable $currentException = null;
 
     /** @var Request */
     protected $request;
@@ -319,12 +323,41 @@ class Handle
 
         $exception = [];
         $hasParseError = false; // 判断是否有语法错误
-        // 判断响应数据 $response 中是否有异常数据 exception
-        if (property_exists($response, 'exception') && ! empty($response->exception)) {
+
+        // 获取异常对象：优先从当前实例获取，其次从响应对象获取，最后检查静态属性
+        $exceptionObj = null;
+
+        // 首先检查 Handle 实例中存储的异常（通过 initError 方法设置）
+        if ($this->currentException instanceof Throwable) {
+            $exceptionObj = $this->currentException;
+        }
+        // 其次检查响应对象中的异常属性
+        elseif (property_exists($response, 'exception') && ! empty($response->exception)) {
             $exceptionObj = $response->exception;
+        }
+        // 最后检查 ExceptionTrait 静态属性（兼容性回退）
+        elseif (self::$initErr && ! empty(self::$message)) {
+            // 从 ExceptionTrait 的静态属性中重建异常信息
+            // 注意：这里我们无法获取完整的异常对象，只能获取已处理的信息
+            $fileName = self::$content['file:'] ?? '';
+            $line = self::$content['line:'] ?? 0;
+            $code = self::$content['code:'] ?? 500;
+            $message = self::$message;
+
+            $exception = [
+                'message' => $message,
+                'line' => $line,
+                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$this->getExceptionContent(self::$errObj).'</code></pre>',
+                'file' => '<span class="json-label"><a href="'.(config('trace.editor') ?? 'phpstorm').'://open?file='.urlencode($fileName).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>',
+                'code' => $code,
+            ];
+        }
+
+        // 如果有异常对象，则构建异常信息数组
+        if ($exceptionObj instanceof Throwable) {
             $hasParseError = $exceptionObj instanceof ParseError; // 判断是否有语法错误
-            $exceptionString = $this->getExceptionContent($response->exception);
-            $fileName = $this->getFilePath($exceptionObj->getFile()); //
+            $exceptionString = $this->getExceptionContent($exceptionObj);
+            $fileName = $this->getFilePath($exceptionObj->getFile());
             $editor = config('trace.editor') ?? 'phpstorm';
             $exception = [
                 'message' => $exceptionObj->getMessage(),
@@ -430,10 +463,11 @@ class Handle
         $base = [
             '请求信息' => $this->request->method().' '.$this->request->fullUrl(),
             '运行时间' => $runtime.'秒',
-            '吞吐率' => $reqs.'req/s',
+            '吞吐率' => $reqs.' req/s',
             '内存消耗' => size_format(memory_get_usage() - $this->startMemory),
             '查询时间' => $sqlTimes.'秒',
         ];
+
         try {
             if ($this->request->session()) {
                 $base['会话信息'] = 'SESSION_ID='.$this->request->session()->getId();
@@ -442,36 +476,49 @@ class Handle
             $base['会话信息'] = 'SESSION_ID=';
         }
 
-        $base['PHP version'] = phpversion();
-        $base['Laravel version'] = $this->app->version();
-        $base['environment'] = $this->app->environment();
-        $base['locale'] = $this->app->getLocale();
+        $base['PHP Version'] = phpversion();
+        $base['Laravel Version'] = $this->app->version();
+        $base['Environment'] = $this->app->environment();
+        $base['Locale'] = $this->app->getLocale();
 
         // DB 数据库连接信息
-        $dbConfig = DB::connection()->getConfig();
-        $username = $dbConfig['username'] ?? '-';
+        try {
+            $dbConfig = DB::connection()->getConfig();
+            $username = $dbConfig['username'] ?? '-';
 
-        $base['DB Driver'] = ($dbConfig['driver'] ?? '-').'('.$this->maskIP($dbConfig['host'] ?? '-').') '.($dbConfig['charset'] ?? '-');
-        $base['DB Connect'] = ($dbConfig['database'] ?? '-').'('.substr($username, 0, 2).'***'.substr($username, -2).')';
+            $base['DB Driver'] = ($dbConfig['driver'] ?? '-').'('.$this->maskIP($dbConfig['host'] ?? '-').') '.($dbConfig['charset'] ?? '-');
+            $base['DB Connect'] = ($dbConfig['database'] ?? '-').'('.substr($username, 0, 2).'***'.substr($username, -2).')';
+        } catch (Exception $e) {
+            $base['DB Driver'] = '-';
+            $base['DB Connect'] = '-';
+        }
 
         // 操作系统名称
         $osName = php_uname('s');
-        // 根据需要，你可以将系统名称转换为更友好的格式
         $friendlyOsName = match (strtoupper($osName)) {
             'DARWIN' => 'macOS',
             'LINUX' => 'Linux',
             'WINDOWS NT' => 'Windows',
             default => $osName,
         };
-        // 系统信息
+
         $base['OS'] = $friendlyOsName.' v'.php_uname('r').' '.php_uname('m');
+
+        // 磁盘空间信息（仅非 Windows 系统）
         if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
-            $directoryPath = '/'; // 根目录
-            $totalSpace = disk_total_space($directoryPath); // 磁盘总空间
-            $freeSpace = disk_free_space($directoryPath); // 磁盘可用空间
-            $useSpace = bcsub($totalSpace, $freeSpace, 0); // 磁盘已用空间
-            $usageRate = bcmul(bcdiv($useSpace, $totalSpace, 5), 100, 2).'%'; // 磁盘使用率
-            $base['Disk Space'] = 'total:'.size_format($totalSpace).'; used:'.size_format($useSpace).'; free:'.size_format($freeSpace).'; usage-rate:'.$usageRate;
+            try {
+                $directoryPath = '/';
+                $totalSpace = disk_total_space($directoryPath);
+                $freeSpace = disk_free_space($directoryPath);
+
+                if ($totalSpace && $freeSpace) {
+                    $useSpace = bcsub($totalSpace, $freeSpace, 0);
+                    $usageRate = bcmul(bcdiv($useSpace, $totalSpace, 5), 100, 2).'%';
+                    $base['Disk Space'] = 'total:'.size_format($totalSpace).'; used:'.size_format($useSpace).'; free:'.size_format($freeSpace).'; usage:'.$usageRate;
+                }
+            } catch (Exception $e) {
+                // 忽略磁盘空间获取错误
+            }
         }
 
         return $base;
@@ -655,7 +702,9 @@ class Handle
         }
 
         $stacktrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
-        $stackItem = $stacktrace[0];
+        $stackItem = $stacktrace[0] ?? [];
+
+        // 查找第一个不在 vendor 目录中的调用栈
         foreach ($stacktrace as $trace) {
             if (! isset($trace['file']) || str_contains($trace['file'], '/vendor/')) {
                 continue;
@@ -664,24 +713,36 @@ class Handle
             $stackItem = $trace;
             break;
         }
-        if (empty($stackItem)) {
+
+        if (empty($stackItem) || !isset($stackItem['file'])) {
             return;
         }
+
         $baseFilePath = $this->getFilePath($stackItem['file']);
         $this->messages[] = [
-            'var' => $var1, // 传入的变量调试值
-            'local' => basename($baseFilePath).'#'.$stackItem['line'], // 文件名+行号',
+            'var' => $var1,
+            'local' => basename($baseFilePath).'#'.$stackItem['line'],
             'type' => 'trace',
             'right' => strtoupper($type),
             'file_path' => $stackItem['file'],
-            'base_path' => $baseFilePath, // 相对于 项目 的路径
+            'base_path' => $baseFilePath,
             'line' => $stackItem['line'] ?? 1,
         ];
-
     }
 
     public function getFilePath($file = ''): string
     {
-        return substr($file, strlen(base_path()) + 1);
+        if (empty($file)) {
+            return '';
+        }
+
+        $basePath = base_path();
+
+        // 如果文件路径不包含基础路径，直接返回原路径
+        if (!str_contains($file, $basePath)) {
+            return $file;
+        }
+
+        return substr($file, strlen($basePath) + 1);
     }
 }

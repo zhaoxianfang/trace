@@ -31,12 +31,14 @@ EOT;
         // tab name
         foreach ($tabNames as $key => $name) {
             $tabKey = ($key + 1);
-            $html .= "<div class='tabs-item ".($key < 1 ? 'active' : '')."' data-tab='tab".$tabKey."'>".$name.'</div>';
+            $activeClass = ($key < 1) ? 'active' : '';
+            $isSelected = $key < 1 ? 'true' : 'false';
+            $html .= "<div class='tabs-item {$activeClass}' data-tab='tab{$tabKey}' tabindex='0' role='tab' aria-selected='{$isSelected}'>{$name}</div>";
         }
 
         $html .= <<<'EOT'
         </div>
-        <div class="tabs-close">关闭</div>
+        <div class="tabs-close" title="关闭调试面板 (ESC)">×</div>
       </div>
 EOT;
 
@@ -47,7 +49,7 @@ EOT;
             $tabIndex++;
             $active = ($tabIndex < 2 ? 'active' : '');
             $html .= <<<EOT
-        <div id="tab{$tabKey}" class="tabs-content {$active}">
+        <div id="tab{$tabKey}" class="tabs-content {$active}" role="tabpanel" aria-labelledby="tab{$tabKey}">
 <ul>
 EOT;
             foreach ($tabs as $k => $item) {
@@ -79,12 +81,12 @@ EOT;
                                 $arrayString = json_encode($item, JSON_UNESCAPED_UNICODE);
                                 $html .= <<<EOT
     <div class="json-arrow-pre-wrapper">
-      <span class="json-arrow" onclick="toggleJson(this)">▶</span>
+      <span class="json-arrow" onclick="toggleJson(this)" role="button" tabindex="0" aria-expanded="false">▶</span>
       <pre class="json">{$arrayString}</pre>
     </div>
 EOT;
                             }elseif (empty($item)){
-                                $html .= "<span class='json-string-content'>array[]</span>";
+                                $html .= "<span class='json-string-content'>[]</span>";
                             }
                         }
 
@@ -94,7 +96,7 @@ EOT;
                         }
                     }
                 } catch (Exception $e) {
-                    $html .= "<div class='json-string-content'> Unrecognized data </div>";
+                    $html .= "<div class='json-string-content' style='color: #ef4444;'>⚠️ 数据解析错误</div>";
                 }
                 $html .= '</li>';
             }
@@ -155,6 +157,7 @@ EOT;
         }
 
         $traceContent = $this->output($response);
+
         if (empty($traceContent)) {
             return $response;
         }

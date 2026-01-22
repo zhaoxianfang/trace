@@ -81,11 +81,11 @@ trait ExceptionShowDebugHtmlTrait
         }
 
         // 获取系统名称
-        $sysName = config('app.name', '威四方');
+        $sysName = config('app.name', 'Trace Debug');
         // 生成版权信息
-        $copyright = '&copy; '.date('Y').' '.$sysName.' ('.config('app.url', 'https://weisifang.com').') 版权所有.';
+        $copyright = '&copy; '.date('Y').' '.$sysName.' 版权所有.';
         // 标题过长时截断
-        $title = mb_strlen($title, 'utf-8') > 15 ? mb_substr($title, 0, 15, 'utf-8').'...' : $title;
+        $title = mb_strlen($title, 'utf-8') > 20 ? mb_substr($title, 0, 20, 'utf-8').'...' : $title;
 
         // 生成完整的 HTML 页面
         $html = <<<HTML
@@ -232,13 +232,18 @@ HTML;
         }
 
         // 否则，集成 Trace 调试工具
-        /** @var Handle $trace */
-        $trace = app('trace');
+        try {
+            /** @var Handle $trace */
+            $trace = app('trace');
 
-        // 获取当前请求对象
-        $request = app(Request::class);
+            // 获取当前请求对象
+            $request = app(Request::class);
 
-        return $trace->renderTraceStyleAndScript($request, $resp)->send();
+            return $trace->renderTraceStyleAndScript($request, $resp)->send();
+        } catch (\Throwable $e) {
+            // 如果集成失败，返回基础页面
+            return $resp->send();
+        }
     }
 
     /**
