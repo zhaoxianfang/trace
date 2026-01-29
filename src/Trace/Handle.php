@@ -229,21 +229,73 @@ class Handle
      */
     private function addQuery($event): void
     {
-        // 获取绑定的参数
-        $bindings = $event->bindings;
-        $sql = $event->sql;
+        try {
+            // 获取绑定的参数
+            $bindings = $event->bindings ?? [];
+            $sql = $event->sql ?? '';
 
-        // 替换参数占位符
-        foreach ($bindings as $binding) {
-            $binding = is_string($binding) ? "'{$binding}'" : $binding;
-            $sql = preg_replace('/\?/', $binding, $sql, 1);
+            // 替换参数占位符
+            foreach ($bindings as $binding) {
+                // 根据数据类型进行转换
+                $bindingValue = $this->convertBindingToString($binding);
+                $sql = preg_replace('/\?/', $bindingValue, $sql, 1);
+            }
+
+            // 限制SQL长度，避免内存溢出
+            if (strlen($sql) > 5000) {
+                $sql = substr($sql, 0, 5000) . '... [TRUNCATED]';
+            }
+
+            $this->sqlList[] = [
+                'sql' => $sql,
+                'type' => 'Query',
+                'time' => $event->time ?? 0, // 'ms'
+                // 'connection' => $event->connectionName, // eg: mysql
+            ];
+        } catch (\Throwable $e) {
+            // 静默处理，避免影响主流程
         }
-        $this->sqlList[] = [
-            'sql' => $sql,
-            'type' => 'Query',
-            'time' => $event->time, // 'ms'
-            // 'connection' => $event->connectionName, // eg: mysql
-        ];
+    }
+
+    /**
+     * 将绑定的参数值转换为SQL字符串
+     *
+     * @param  mixed  $binding
+     * @return string
+     */
+    private function convertBindingToString($binding): string
+    {
+        if (is_null($binding)) {
+            return 'NULL';
+        }
+
+        if (is_bool($binding)) {
+            return $binding ? 'true' : 'false';
+        }
+
+        if (is_string($binding)) {
+            // 转义单引号防止SQL注入显示错误
+            $binding = str_replace("'", "''", $binding);
+            return "'{$binding}'";
+        }
+
+        if (is_numeric($binding)) {
+            return (string) $binding;
+        }
+
+        if (is_array($binding)) {
+            return json_encode($binding, JSON_UNESCAPED_UNICODE);
+        }
+
+        if (is_object($binding)) {
+            if (method_exists($binding, '__toString')) {
+                return "'" . str_replace("'", "''", (string) $binding) . "'";
+            }
+            return "'" . get_class($binding) . "'";
+        }
+
+        // 其他类型转换为字符串并转义
+        return "'" . str_replace("'", "''", (string) $binding) . "'";
     }
 
     /**
@@ -255,13 +307,24 @@ class Handle
      */
     private function addTransactionQuery($event, $connection): void
     {
-        $this->sqlList[] = [
-            'sql' => '['.$connection->getName().':'.$connection->getConfig('driver').'] '.$event,
-            'type' => 'Transaction',
-            'time' => 0,
-            // 'connection' => $connection->getName(),
-            // 'driver'     => $connection->getConfig('driver'),
-        ];
+        try {
+            if (! $connection) {
+                return;
+            }
+
+            $connectionName = method_exists($connection, 'getName') ? $connection->getName() : 'unknown';
+            $driver = method_exists($connection, 'getConfig') ? ($connection->getConfig('driver') ?? 'unknown') : 'unknown';
+
+            $this->sqlList[] = [
+                'sql' => '['.$connectionName.':'.$driver.'] '.$event,
+                'type' => 'Transaction',
+                'time' => 0,
+                // 'connection' => $connection->getName(),
+                // 'driver'     => $connection->getConfig('driver'),
+            ];
+        } catch (\Throwable $e) {
+            // 静默处理，避免影响主流程
+        }
     }
 
     /**
