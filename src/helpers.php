@@ -163,8 +163,8 @@ if (! function_exists('get_trace_module_name')) {
      */
     function get_trace_module_name(?bool $toUnderlineConvert = false): mixed
     {
-        if (function_exists('get_module_name')) {
-            return get_module_name($toUnderlineConvert);
+        if (function_exists('module_name')) {
+            return module_name();
         }
         try {
             if (app()->runningInConsole()) {
@@ -198,9 +198,6 @@ if (! function_exists('get_trace_url_module_name')) {
      */
     function get_trace_url_module_name(?bool $toUnderlineConvert = false): string
     {
-        if (function_exists('get_url_module_name')) {
-            return get_url_module_name($toUnderlineConvert);
-        }
         $module = str(request()->path())->before('/')->lower()->value() ?: 'app';
 
         return $toUnderlineConvert ? $module : \Illuminate\Support\Str::studly($module);
