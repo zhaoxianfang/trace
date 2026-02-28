@@ -169,8 +169,10 @@ class TraceExceptionHandler implements ExceptionHandler
             // 可能自定义接管的异常类也有异常，忽略并继续处理
         }
 
+        // 是否为 ajax 请求
+        $isAjaxRequest = ($request->is('api/*') || ! $request->isMethod('get')) || $request->expectsJson();
         // 调试模式
-        if (config('app.debug') || app()->runningInConsole()) {
+        if ((config('app.debug') || app()->runningInConsole()) && !$isAjaxRequest) {
             try {
                 $response = $this->trace->debug($e);
                 $this->rendering = false;
@@ -184,7 +186,7 @@ class TraceExceptionHandler implements ExceptionHandler
 
         // 判断路径 : 不是get的api 或 json 请求
         try {
-            if (($request->is('api/*') || ! $request->isMethod('get')) || $request->expectsJson()) {
+            if ($isAjaxRequest) {
                 $response = $this->trace->respJson($this->trace::$message, $this->trace::$code)->send();
             } else {
                 $response = $this->trace->respView($this->trace::$message, $this->trace::$code)->send();
