@@ -63,8 +63,7 @@ class Handle
 
     protected array $sqlList = [];
 
-    // 模型列表 - 改为实例变量，避免静态变量导致的内存泄漏
-    protected array $modelList = [];
+    protected static array $modelList = [];
 
     // 请求 ID，用于区分不同请求
     protected ?string $requestId = null;
@@ -74,11 +73,20 @@ class Handle
     // 存储当前请求的异常信息
     protected ?Throwable $currentException = null;
 
+    // 反射缓存 - 优化性能
+    protected static array $reflectionCache = [];
+
     /** @var Request */
     protected $request;
 
     /** @var Response */
     protected $response;
+
+    // 全局标记：事件监听器是否已注册
+    protected static bool $eventListenersRegistered = false;
+
+    // 全局标记：当前正在处理的请求 ID
+    protected static ?string $currentRequestId = null;
 
     // 请求计数器，用于追踪请求次数
     protected static int $requestCounter = 0;
@@ -95,7 +103,8 @@ class Handle
         // 生成唯一的请求 ID
         $this->requestId = uniqid('trace_', true);
 
-        // 更新请求计数器
+        // 更新全局当前请求 ID
+        self::$currentRequestId = $this->requestId;
         self::$requestCounter++;
 
         if (is_enable_trace()) {
@@ -119,16 +128,23 @@ class Handle
     /**
      * 监听模型事件
      *
-     * 注意：事件监听器会在每个请求实例中注册，通过 requestId 隔离数据
+     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
      */
     public function listenModelEvent(): void
     {
+        // 检查是否已经注册过事件监听器
+        if (self::$eventListenersRegistered) {
+            return;
+        }
+
         $events = ['retrieved', 'creating', 'created', 'updating', 'updated', 'saving', 'saved', 'deleting', 'deleted', 'restoring', 'restored', 'replicating'];
 
         foreach ($events as $event) {
             Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
                 // 只在当前请求 ID 匹配时才记录
-                $this->logModelEvent($listenString, $model, $event);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->logModelEvent($listenString, $model, $event);
+                }
             });
         }
     }
@@ -136,12 +152,17 @@ class Handle
     /**
      * 监听 SQL事件
      *
-     * 注意：事件监听器会在每个请求实例中注册，通过 requestId 隔离数据
+     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
      *
      * @return void
      */
     protected function listenSql(): void
     {
+        // 检查是否已经注册过事件监听器
+        if (self::$eventListenersRegistered) {
+            return;
+        }
+
         $events = isset($this->app['events']) ? $this->app['events'] : null;
         if (! $events) {
             return;
@@ -150,7 +171,10 @@ class Handle
         try {
             // 监听SQL执行
             $events->listen(function (QueryExecuted $query) {
-                $this->addQuery($query);
+                // 只在当前请求 ID 匹配时才记录
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addQuery($query);
+                }
             });
         } catch (Exception $e) {
         }
@@ -158,16 +182,22 @@ class Handle
         try {
             // 监听事务开始
             $events->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($transaction) {
-                $this->addTransactionQuery('Begin Transaction', $transaction->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Begin Transaction', $transaction->connection);
+                }
             });
             // 监听事务提交
             $events->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($transaction) {
-                $this->addTransactionQuery('Commit Transaction', $transaction->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Commit Transaction', $transaction->connection);
+                }
             });
 
             // 监听事务回滚
             $events->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($transaction) {
-                $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
+                }
             });
 
             $connectionEvents = [
@@ -177,15 +207,22 @@ class Handle
             ];
             foreach ($connectionEvents as $event => $eventName) {
                 $events->listen('connection.*.'.$event, function ($event, $params) use ($eventName) {
-                    $this->addTransactionQuery($eventName, $params[0]);
+                    if (self::$currentRequestId === $this->requestId) {
+                        $this->addTransactionQuery($eventName, $params[0]);
+                    }
                 });
             }
             // 监听连接创建
             $events->listen(function (\Illuminate\Database\Events\ConnectionEstablished $event) {
-                $this->addTransactionQuery('Connection Established', $event->connection);
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery('Connection Established', $event->connection);
+                }
             });
         } catch (Exception $e) {
         }
+
+        // 标记事件监听器已注册
+        self::$eventListenersRegistered = true;
     }
 
     /**
@@ -200,14 +237,8 @@ class Handle
             $bindings = $event->bindings ?? [];
             $sql = $event->sql ?? '';
 
-            // 替换参数占位符 - 使用字符串位置查找避免参数中包含 ? 导致的错误
-            foreach ($bindings as $binding) {
-                $pos = strpos($sql, '?');
-                if ($pos !== false) {
-                    $bindingValue = $this->convertBindingToString($binding);
-                    $sql = substr_replace($sql, $bindingValue, $pos, 1);
-                }
-            }
+            // 替换参数占位符 - 使用性能更好的方法
+            $sql = $this->replaceBindings($sql, $bindings);
 
             // 限制SQL长度，避免内存溢出
             if (strlen($sql) > 5000) {
@@ -223,6 +254,26 @@ class Handle
         } catch (\Throwable $e) {
             // 静默处理，避免影响主流程
         }
+    }
+
+    /**
+     * 替换 SQL 中的参数占位符
+     * 使用 strpos + substr_replace 代替 preg_replace，提升性能
+     *
+     * @param  string  $sql SQL 语句
+     * @param  array  $bindings 绑定的参数
+     * @return string 替换后的 SQL
+     */
+    private function replaceBindings(string $sql, array $bindings): string
+    {
+        foreach ($bindings as $binding) {
+            $pos = strpos($sql, '?');
+            if ($pos !== false) {
+                $bindingValue = $this->convertBindingToString($binding);
+                $sql = substr_replace($sql, $bindingValue, $pos, 1);
+            }
+        }
+        return $sql;
     }
 
     /**
@@ -306,19 +357,21 @@ class Handle
      */
     protected function logModelEvent($listenString, $model, $event): void
     {
-        $model = isset($model[0]) ? $model[0] : $model;
+        // 检查当前请求 ID 是否匹配，防止跨请求事件混入
+        if (self::$currentRequestId !== $this->requestId) {
+            return;
+        }
+
+        $model = is_array($model) && isset($model[0]) ? $model[0] : $model;
 
         // 使用: 分割 $model , 获取模型名称
         $modelName = trim(explode(':', $listenString)[1]);
 
         $modelId = $model->getKey();
 
-        // 使用实例变量存储，避免静态变量导致的内存泄漏
-        if (! isset($this->modelList[$this->requestId])) {
-            $this->modelList[$this->requestId] = [];
-        }
-
-        $this->modelList[$this->requestId][] = [
+        // 使用请求 ID 作为键，避免不同请求的数据混淆
+        self::$modelList[$this->requestId] ??= [];
+        self::$modelList[$this->requestId][] = [
             'model' => $modelName,
             'id' => $modelId,
             'event' => $event,
@@ -340,6 +393,11 @@ class Handle
             return '';
         }
 
+        // 检查当前请求 ID 是否匹配
+        if (self::$currentRequestId !== $this->requestId) {
+            return '';
+        }
+
         $this->response = $response;
 
         $exception = [];
@@ -356,19 +414,19 @@ class Handle
         elseif (property_exists($response, 'exception') && ! empty($response->exception)) {
             $exceptionObj = $response->exception;
         }
-        // 最后检查 ExceptionTrait 实例属性（兼容性回退）
-        elseif ($this->initErr && ! empty($this->message)) {
-            // 从 ExceptionTrait 的实例属性中重建异常信息
+        // 最后检查 ExceptionTrait 静态属性（兼容性回退）
+        elseif (self::$initErr && ! empty(self::$message)) {
+            // 从 ExceptionTrait 的静态属性中重建异常信息
             // 注意：这里我们无法获取完整的异常对象，只能获取已处理的信息
-            $fileName = $this->content['file:'] ?? '';
-            $line = $this->content['line:'] ?? 0;
-            $code = $this->content['code:'] ?? 500;
-            $message = $this->message;
+            $fileName = self::$content['file:'] ?? '';
+            $line = self::$content['line:'] ?? 0;
+            $code = self::$content['code:'] ?? 500;
+            $message = self::$message;
 
             $exception = [
                 'message' => $message,
                 'line' => $line,
-                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$this->getExceptionContent($this->errObj).'</code></pre>',
+                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$this->getExceptionContent(self::$errObj).'</code></pre>',
                 'file' => '<span class="json-label"><a href="'.(config('trace.editor') ?? 'phpstorm').'://open?file='.urlencode($fileName).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>',
                 'code' => $code,
             ];
@@ -454,7 +512,7 @@ class Handle
         $data = [];
 
         // 只获取当前请求的模型列表
-        $currentModels = $this->modelList[$this->requestId] ?? [];
+        $currentModels = self::$modelList[$this->requestId] ?? [];
 
         foreach ($currentModels as $model) {
             $key = $model['model'].':'.$model['id'];
@@ -471,7 +529,7 @@ class Handle
         }
 
         // 清理当前请求的数据，避免内存泄漏
-        unset($this->modelList[$this->requestId]);
+        unset(self::$modelList[$this->requestId]);
 
         return $list;
     }
@@ -580,9 +638,10 @@ class Handle
     private function getRouteInfo(bool $hasParseError): array
     {
         $route = $this->router->current();
-        if (! is_a($route, 'Illuminate\Routing\Route')) {
+        if (! $route instanceof \Illuminate\Routing\Route) {
             return [];
         }
+
         $uri = head($route->methods()).' '.$route->uri();
         $action = $route->getAction();
         $result = [
@@ -596,32 +655,34 @@ class Handle
             // 语法错误无法执行这个代码段
             if (str_contains($controller, '@')) {
                 [$controller, $method] = explode('@', $controller);
-                if (class_exists($controller) && method_exists($controller, $method)) {
-                    $reflector = new ReflectionMethod($controller, $method);
+                $reflector = $this->getCachedReflectionMethod($controller, $method);
+                if ($reflector) {
+                    $fileName = $this->getFilePath($reflector->getFileName());
+                    $editor = config('trace.editor') ?? 'phpstorm';
+                    $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
                 }
                 unset($result['uses']);
             } elseif ($uses instanceof Closure) {
                 $reflector = new ReflectionFunction($uses);
+                $fileName = $this->getFilePath($reflector->getFileName());
+                $editor = config('trace.editor') ?? 'phpstorm';
+                $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
                 $result['uses'] = $uses;
             } elseif (is_string($uses) && str_contains($uses, '@__invoke')) {
                 if (class_exists($controller) && method_exists($controller, 'render')) {
-                    $reflector = new ReflectionMethod($controller, 'render');
-                    $result['controller'] = $controller.'@render';
+                    $reflector = $this->getCachedReflectionMethod($controller, 'render');
+                    if ($reflector) {
+                        $fileName = $this->getFilePath($reflector->getFileName());
+                        $editor = config('trace.editor') ?? 'phpstorm';
+                        $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
+                        $result['controller'] = $controller.'@render';
+                    }
                 }
             }
         } else {
             // 截取$controller 字符串里 @ 符号前面的字符串
             $result['controller'] = substr($controller, 0, strrpos($controller, '@'));
             unset($result['uses']);
-        }
-
-        // 运行某个控制器方法的那几行
-        if (isset($reflector)) {
-            $fileName = $this->getFilePath($reflector->getFileName()); //
-
-            $editor = config('trace.editor') ?? 'phpstorm';
-            // $result['file'] = $fileName . ':' . $reflector->getStartLine() . '-' . $reflector->getEndLine();
-            $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
         }
 
         $parametersObj = $route->parameters();
@@ -647,26 +708,158 @@ class Handle
         return $result;
     }
 
+    /**
+     * 获取缓存的反射方法
+     *
+     * @param  string  $class 类名
+     * @param  string  $method 方法名
+     * @return \ReflectionMethod|null
+     */
+    private function getCachedReflectionMethod(string $class, string $method): ?\ReflectionMethod
+    {
+        $key = $class.'::'.$method;
+
+        if (! isset(self::$reflectionCache[$key])) {
+            try {
+                self::$reflectionCache[$key] = class_exists($class) && method_exists($class, $method)
+                    ? new ReflectionMethod($class, $method)
+                    : null;
+            } catch (\Throwable $e) {
+                self::$reflectionCache[$key] = null;
+            }
+        }
+
+        return self::$reflectionCache[$key];
+    }
+
     private function getSqlInfo(): array
     {
-        // $this->sqlList = DB::getQueryLog(); // 获取查询sql
-
         $sqlTimes = 0;
-        // $this->sqlList 里面包含 sql、time、type 字段
-        foreach ($this->sqlList as &$item) {
+        $sqlList = [];
+
+        // 从配置获取SQL分组规则
+        $groupConfig = config('trace.sql_groups', ['enabled' => true, 'groups' => []]);
+
+        // 定义默认SQL分组规则
+        $defaultGroupPatterns = [
+            'cache' => [
+                'name' => '缓存查询',
+                'class' => 'sql-group-cache',
+                'patterns' => [
+                    '/select\s+.*\s+from\s+`?cache`?/i',
+                    '/select\s+.*\s+from\s+`?cache_[\w]+`?/i',
+                    '/insert\s+into\s+`?cache`?/i',
+                    '/update\s+`?cache`?\s+set/i',
+                    '/delete\s+from\s+`?cache`?/i',
+                    '/select.*cache_key/i',
+                    '/select.*cache_value/i',
+                ]
+            ],
+            'session' => [
+                'name' => '会话查询',
+                'class' => 'sql-group-session',
+                'patterns' => [
+                    '/select\s+.*\s+from\s+`?sessions`?/i',
+                    '/insert\s+into\s+`?sessions`?/i',
+                    '/update\s+`?sessions`?\s+set/i',
+                    '/delete\s+from\s+`?sessions`?/i',
+                    '/select.*session_id/i',
+                    '/select.*user_id/i',
+                    '/select.*payload/i',
+                ]
+            ]
+        ];
+
+        // 合并配置和默认规则
+        $groupPatterns = array_merge($defaultGroupPatterns, $groupConfig['groups']);
+
+        // 检查是否启用分组
+        $groupEnabled = $groupConfig['enabled'] ?? true;
+        $collapsedByDefault = $groupConfig['collapsed_by_default'] ?? false;
+
+        // 分类SQL语句
+        $groupedSql = array_fill_keys(array_keys($groupPatterns), []);
+        $groupedSql['other'] = [];
+
+        foreach ($this->sqlList as $item) {
             if (! isset($item['time'])) {
+                $sqlList[] = [
+                    'label' => $item['sql'],
+                    'right' => '-',
+                ];
                 continue;
             }
+
             $sqlTimes = bcadd($sqlTimes, $item['time'], 3);
-            $item = [
+            $sqlItem = [
                 'label' => $item['sql'],
-                'right' => !empty($item['time'])?$item['time'].'ms':'-',
+                'right' => !empty($item['time']) ? $item['time'].'ms' : '-',
             ];
+
+            // 如果启用分组，判断SQL是否属于某个分组
+            if ($groupEnabled) {
+                $matchedGroup = null;
+                foreach ($groupPatterns as $groupKey => $group) {
+                    foreach ($group['patterns'] as $pattern) {
+                        if (preg_match($pattern, $item['sql'])) {
+                            $matchedGroup = $groupKey;
+                            break 2;
+                        }
+                    }
+                }
+
+                if ($matchedGroup && isset($groupedSql[$matchedGroup])) {
+                    $groupedSql[$matchedGroup][] = $sqlItem;
+                } else {
+                    $groupedSql['other'][] = $sqlItem;
+                }
+            } else {
+                // 未启用分组，直接添加
+                $sqlList[] = $sqlItem;
+            }
         }
+
+        // 构建最终的SQL列表，如果有分组则展示分组，否则直接展示
+        if ($groupEnabled) {
+            // 检查是否有分组数据
+            $hasGroups = false;
+            foreach (array_keys($groupPatterns) as $groupKey) {
+                if (!empty($groupedSql[$groupKey])) {
+                    $hasGroups = true;
+                    break;
+                }
+            }
+
+            if ($hasGroups) {
+                // 添加其他SQL（业务SQL）
+                if (!empty($groupedSql['other'])) {
+                    $sqlList = $groupedSql['other'];
+                }
+
+                // 添加各个分组
+                foreach ($groupPatterns as $groupKey => $group) {
+                    if (!empty($groupedSql[$groupKey])) {
+                        $sqlList[] = [
+                            'type' => 'sql_group',
+                            'group' => $groupKey,
+                            'name' => $group['name'] ?? $groupKey,
+                            'class' => $group['class'] ?? 'sql-group',
+                            'collapsed' => $collapsedByDefault,
+                            'sqls' => $groupedSql[$groupKey],
+                            'count' => count($groupedSql[$groupKey])
+                        ];
+                    }
+                }
+            } else {
+                // 没有分组，直接展示
+                $sqlList = $groupedSql['other'];
+            }
+        }
+
         // 毫秒转秒
         $sqlTimes = $sqlTimes > 0 ? bcdiv($sqlTimes, 1000, 3) : 0;
 
-        return [$this->sqlList, $sqlTimes];
+        return [$sqlList, $sqlTimes];
     }
 
     private function getSessionInfo()

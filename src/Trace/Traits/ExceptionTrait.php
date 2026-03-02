@@ -11,91 +11,46 @@ use Throwable;
 
 /**
  * 异常处理Trait
- *
- * 优化说明：
- * - 将静态属性改为实例属性，避免在常驻内存环境下的数据污染和内存泄漏
- * - 每个异常处理实例都拥有独立的状态
  */
 trait ExceptionTrait
 {
     use ExceptionCodeTrait,ExceptionNotifyTrait;
 
-    // 可使外部调用的处理好的错误码 - 改为实例属性
-    protected int $code = 500;
+    // 可使外部调用的处理好的错误码
+    public static int $code = 500;
 
-    // 可使外部调用的处理好的错误信息 - 改为实例属性
-    protected string $message = '出错啦!';
+    // 可使外部调用的处理好的错误信息
+    public static string $message = '出错啦!';
 
-    // 是否为系统错误 - 改为实例属性
-    protected bool $isSysErr = false;
+    // 是否为系统错误
+    public static bool $isSysErr = false;
 
-    // 是否为用户错误 - 改为实例属性
-    protected bool $isUserErr = false;
+    // 是否为用户错误
+    public static bool $isUserErr = false;
 
-    // 是否初始化过异常信息 - 改为实例属性
-    protected bool $initErr = false;
+    // 是否初始化过异常信息
+    public static bool $initErr = false;
 
-    // 错误信息 - 改为实例属性
-    protected array $content = [];
-    protected ?Throwable $errObj = null;
-
-    /**
-     * 获取错误码 - 兼容静态访问方式
-     */
-    public function getCode(): int
-    {
-        return $this->code;
-    }
-
-    /**
-     * 获取错误信息 - 兼容静态访问方式
-     */
-    public function getMessage(): string
-    {
-        return $this->message;
-    }
-
-    /**
-     * 获取初始化错误状态
-     */
-    public function getInitErr(): bool
-    {
-        return $this->initErr;
-    }
-
-    /**
-     * 静态访问错误码 - 兼容旧代码
-     */
-    public static function getStaticCode(): int
-    {
-        $instance = app('trace');
-        return $instance->code;
-    }
-
-    /**
-     * 静态访问错误信息 - 兼容旧代码
-     */
-    public static function getStaticMessage(): string
-    {
-        $instance = app('trace');
-        return $instance->message;
-    }
+    // 错误信息
+    public static array $content = [];
+    public static Throwable $errObj;
 
     public function initError(Throwable $e): void
     {
-        // 重置所有实例状态，确保每次异常处理都是干净的
-        $this->initErr = false;
-        $this->isSysErr = false;
-        $this->isUserErr = false;
-        $this->content = [];
+        // 重置所有静态状态，确保每次异常处理都是干净的
+        self::$initErr = false;
+        self::$isSysErr = false;
+        self::$isUserErr = false;
+        self::$content = [];
 
-        $this->initErr = true;
-        $this->isSysErr = $this->isSystemException($e);
+        self::$initErr = true;
+        self::$isSysErr = self::isSystemException($e);
         $this->setStatusCode($e);
         $this->setErrorMessage($e);
         $this->setError($e);
 
         // 存储当前异常信息，供 Handle::output() 方法使用
+        // 注意：使用 $this->currentException 而不是静态变量，以支持多实例
         if (property_exists($this, 'currentException')) {
             $this->currentException = $e;
         }
@@ -110,10 +65,10 @@ trait ExceptionTrait
      */
     public function writeLog(Throwable $e): void
     {
-        if (! $this->initErr) {
+        if (! self::$initErr) {
             $this->initError($e);
         }
-        $message = $this->isSysErr ? $e->getMessage() : $this->message;
+        $message = self::$isSysErr ? $e->getMessage() : self::$message;
 
         // 标记日志已经被记录过了（仅在 HTTP 环境下）
         try {
@@ -142,11 +97,11 @@ trait ExceptionTrait
      */
     protected function setStatusCode(Throwable $e): int
     {
-        if (! $this->initErr) {
+        if (! self::$initErr) {
             $this->initError($e);
         }
         // 特定异常的状态码映射
-        $this->code = match (true) {
+        self::$code = match (true) {
             $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface => $e->getStatusCode(),// 如果是 HTTP 异常，使用其状态码
             $e instanceof \Illuminate\Auth\AuthenticationException => 401,
             $e instanceof \Illuminate\Auth\Access\AuthorizationException => 403,
@@ -156,7 +111,7 @@ trait ExceptionTrait
             default => $e->getCode() > 0 ? $e->getCode() : (int) (method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500),
         };
 
-        return $this->code;
+        return self::$code;
     }
 
     /**
@@ -166,46 +121,47 @@ trait ExceptionTrait
     {
         if (str_contains(strtoupper($e->getMessage()) , 'SQLSTATE')) {
             // 通过错误消息中是否包含 SQLSTATE 字符串来判断是否为 数据库相关异常
-            $this->isSysErr = true;
-            $this->code = 500; // 设置为 500 系统错误
+            self::$isSysErr = true;
+            self::$code = 500; // 设置为 500 系统错误
         }
-        if (! $this->isUserErr && (App::environment('production') || $this->isSysErr) && ! config('app.debug')) {
+        // if (App::environment('production') || ! config('app.debug') || self::$isSysErr) {
+        if (! self::$isUserErr && (App::environment('production') || self::$isSysErr) && ! config('app.debug')) {
             // 生产环境 || 关闭调试 || 系统错误 => 返回错误码对应的提示信息
-            $this->message = $this->getCodeMeg($this->code);
+            self::$message = $this->getCodeMeg(self::$code);
         } else {
-            $this->message = $e->getMessage();
+            self::$message = $e->getMessage();
         }
 
-        if (empty($this->message)) {
-            $this->message = $this->getCodeMeg($this->code);
+        if (empty(self::$message)) {
+            self::$message = $this->getCodeMeg(self::$code);
         }
 
-        return $this->message;
+        return self::$message;
     }
 
     protected function setError(Throwable $e): array
     {
-        if (! $this->initErr) {
+        if (! self::$initErr) {
             $this->initError($e);
         }
-        $this->content = [
-            'message:' => $this->message,   // 返回用户自定义的异常信息
-            'code:' => $this->code,         // 返回用户自定义的异常代码
+        self::$content = [
+            'message:' => self::$message,   // 返回用户自定义的异常信息
+            'code:' => self::$code,         // 返回用户自定义的异常代码
             'file:' => $e->getFile(),       // 返回发生异常的PHP程序文件名
             'line:' => $e->getLine(),       // 返回发生异常的代码所在行的行号
             // "trace:"     => $e->getTrace(),      //返回发生异常的传递路线
             // "传递路线String" => $e->getTraceAsString(),//返回发生异常的传递路线
         ];
 
-        $this->errObj = $e; // 记录整个异常信息
+        self::$errObj = $e; // 记录整个异常信息
 
-        return $this->content;
+        return self::$content;
     }
 
     /**
      * 判断是否为系统错误
      */
-    private function isSystemException(Throwable $exception): bool
+    private static function isSystemException(Throwable $exception): bool
     {
         // zxf/tools 扩展包中的错误不算系统错误
         $filePath = $exception->getFile();
@@ -217,13 +173,13 @@ trait ExceptionTrait
         if (empty($message = $exception->getMessage()) || preg_match('/[\x{4e00}-\x{9fa5}]/u', $message) || ($exception->getCode() >= 400 && $exception->getCode() < 500)) {
             // 4xx 状态码 (客户端错误) -> 通常是用户/调用方错误
             // 很可能是人为的 abort() 调用 或者用户提交的数据错误等
-            $this->isUserErr = true;
+            self::$isUserErr = true;
 
             return false;
         }
 
         // 致命错误
-        if ($this->isFatalError($exception)) {
+        if (self::isFatalError($exception)) {
             // 判断是否为致命错误
             return true;
         }
@@ -248,7 +204,7 @@ trait ExceptionTrait
     /**
      * 判断是否为致命错误
      */
-    protected function isFatalError(Throwable $exception): bool
+    protected static function isFatalError(Throwable $exception): bool
     {
         return
             $exception instanceof ParseError // 语法错误，如语法拼写不正确。
@@ -371,7 +327,7 @@ trait ExceptionTrait
     // 显示错误信息
     public function debug(Throwable $e): Response|JsonResponse
     {
-        if (! $this->initErr) {
+        if (! self::$initErr) {
             $this->initError($e);
         }
 
@@ -379,11 +335,11 @@ trait ExceptionTrait
             [
                 'label' => '异常信息',
                 'type' => 'text',
-                'value' => $this->message,
+                'value' => self::$message,
             ], [
                 'label' => '状态码',
                 'type' => 'text',
-                'value' => $this->code,
+                'value' => self::$code,
             ], [
                 'label' => '异常文件',
                 'type' => 'debug_file',
@@ -403,6 +359,6 @@ trait ExceptionTrait
         // 如果是语法错误，$showTrace 为 true 就会陷入死循环
         $showTrace = ! $e instanceof ParseError;
 
-        return $this->outputDebugHtml($content, $this->code.':'.$this->message, $this->code, $showTrace);
+        return $this->outputDebugHtml($content, self::$code.':'.self::$message, self::$code, $showTrace);
     }
 }

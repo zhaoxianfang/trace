@@ -273,7 +273,7 @@
     width: 100% !important;
 }
 
-#trace-tools-box li {
+#trace-tools-box .tabs-content > ul > li {
     display: flex !important;
     flex-wrap: wrap !important;
     align-items: flex-start !important;
@@ -287,15 +287,15 @@
     transition: background-color 0.2s ease !important;
 }
 
-#trace-tools-box li:hover {
+#trace-tools-box .tabs-content > ul > li:hover {
     background-color: #1e293b !important;
 }
 
-#trace-tools-box li:nth-child(even) {
+#trace-tools-box .tabs-content > ul > li:nth-child(even) {
     background-color: rgba(30, 41, 59, 0.5) !important;
 }
 
-#trace-tools-box li:nth-child(odd) {
+#trace-tools-box .tabs-content > ul > li:nth-child(odd) {
     background-color: rgba(15, 23, 42, 0.8) !important;
 }
 
@@ -312,10 +312,71 @@
     min-width: auto !important;
     color: #e2e8f0 !important;
     font-size: 13px !important;
+    overflow-wrap: break-word !important;
+    word-wrap: break-word !important;
 }
 
 #trace-tools-box li .json-label a {
     color: #3b82f6 !important;
+}
+
+/* ========================================
+   展开/收起按钮包装器 - 确保按钮始终可见
+   ======================================== */
+#trace-tools-box .expand-btn-wrapper {
+    display: inline-flex !important;
+    flex-shrink: 0 !important;
+    align-items: center !important;
+    vertical-align: baseline !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* ========================================
+   展开/收起文本
+   ======================================== */
+#trace-tools-box .truncated {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+#trace-tools-box .expanded {
+    white-space: normal !important;
+    word-break: break-word !important;
+}
+
+#trace-tools-box .expand-btn {
+    color: #3b82f6 !important;
+    cursor: pointer !important;
+    border: none !important;
+    background: none !important;
+    padding: 2px 8px !important;
+    font-size: 12px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    border-radius: 4px !important;
+    transition: all 0.2s ease !important;
+    font-weight: 500 !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+}
+
+#trace-tools-box .expand-btn:hover {
+    color: #60a5fa !important;
+    background-color: #1e293b !important;
+    text-decoration: none !important;
+}
+
+#trace-tools-box .expand-btn::before {
+    content: '▶' !important;
+    font-size: 10px !important;
+    margin-right: 4px !important;
+    display: inline-block !important;
+}
+
+#trace-tools-box .expanded .expand-btn::before {
+    content: '▼' !important;
 }
 
 /* ========================================
@@ -357,6 +418,222 @@
     color: #94a3b8 !important;
     text-align: right !important;
     flex-shrink: 0 !important;
+}
+
+#trace-tools-box .sql-group {
+    margin: 8px 12px !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    border: 2px solid #334155 !important;
+    background: #0f172a !important;
+}
+
+#trace-tools-box .sql-group-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 12px 16px !important;
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%) !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+    user-select: none !important;
+}
+
+#trace-tools-box .sql-group-header:hover {
+    background: linear-gradient(135deg, #334155 0%, #475569 100%) !important;
+}
+
+#trace-tools-box .sql-group-title {
+    font-weight: 600 !important;
+    color: #e2e8f0 !important;
+    font-size: 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+}
+
+#trace-tools-box .sql-group-count {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    color: #ffffff !important;
+    padding: 4px 10px !important;
+    border-radius: 12px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+}
+
+#trace-tools-box .sql-group-toggle {
+    width: 28px !important;
+    height: 28px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 6px !important;
+    background: rgba(59, 130, 246, 0.2) !important;
+    color: #3b82f6 !important;
+    font-size: 16px !important;
+    transition: all 0.2s ease !important;
+    flex-shrink: 0 !important;
+}
+
+#trace-tools-box .sql-group-toggle:hover {
+    background: rgba(59, 130, 246, 0.4) !important;
+}
+
+#trace-tools-box .sql-group.collapsed .sql-group-toggle {
+    transform: rotate(-90deg) !important;
+}
+
+#trace-tools-box .sql-group-content {
+    display: block !important;
+    transition: max-height 0.3s ease !important;
+    max-height: 2000px !important;
+    overflow: hidden !important;
+    list-style: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+#trace-tools-box .sql-group.collapsed .sql-group-content {
+    display: none !important;
+}
+
+#trace-tools-box .sql-group-content > li {
+    border: none !important;
+    border-bottom: 1px solid #1e293b !important;
+    background: #0f172a !important;
+    padding: 8px 16px !important;
+    margin: 0 !important;
+}
+
+#trace-tools-box .sql-group-content > li:last-child {
+    border-bottom: none !important;
+}
+
+#trace-tools-box .sql-group-content > li:hover {
+    background: #1e293b !important;
+}
+
+#trace-tools-box .sql-group-cache {
+    border-color: #f59e0b !important;
+}
+
+#trace-tools-box .sql-group-cache .sql-group-header {
+    background: linear-gradient(135deg, #78350f 0%, #92400e 100%) !important;
+}
+
+#trace-tools-box .sql-group-cache .sql-group-title {
+    color: #fef3c7 !important;
+}
+
+#trace-tools-box .sql-group-cache .sql-group-count {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+}
+
+#trace-tools-box .sql-group-cache .sql-group-toggle {
+    background: rgba(245, 158, 11, 0.2) !important;
+    color: #f59e0b !important;
+}
+
+#trace-tools-box .sql-group-cache .sql-group-toggle:hover {
+    background: rgba(245, 158, 11, 0.4) !important;
+}
+
+#trace-tools-box .sql-group-session {
+    border-color: #8b5cf6 !important;
+}
+
+#trace-tools-box .sql-group-session .sql-group-header {
+    background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%) !important;
+}
+
+#trace-tools-box .sql-group-session .sql-group-title {
+    color: #ede9fe !important;
+}
+
+#trace-tools-box .sql-group-session .sql-group-count {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%) !important;
+}
+
+#trace-tools-box .sql-group-session .sql-group-toggle {
+    background: rgba(139, 92, 246, 0.2) !important;
+    color: #8b5cf6 !important;
+}
+
+#trace-tools-box .sql-group-session .sql-group-toggle:hover {
+    background: rgba(139, 92, 246, 0.4) !important;
+}
+
+/* SQL分组内的li元素不应用普通li的样式 */
+#trace-tools-box .sql-group-content > li {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    padding: 10px 16px !important;
+    margin: 0 !important;
+    border: none !important;
+    border-bottom: 1px solid rgba(30, 41, 59, 0.8) !important;
+    background: #0f172a !important;
+    min-height: 42px !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    transition: background-color 0.2s ease !important;
+}
+
+#trace-tools-box .sql-group-content > li:hover {
+    background-color: rgba(30, 41, 59, 0.6) !important;
+}
+
+#trace-tools-box .sql-group-content > li:last-child {
+    border-bottom: none !important;
+}
+
+/* SQL分组内的json-label样式调整 */
+#trace-tools-box .sql-group-content > li > .json-label {
+    flex: 1 !important;
+    line-height: 1.6 !important;
+    word-break: break-word !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: inline-block !important;
+    min-width: 0 !important;
+    max-width: calc(100% - 100px) !important;
+    color: #e2e8f0 !important;
+    font-size: 13px !important;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Menlo', monospace !important;
+    overflow-wrap: break-word !important;
+    word-wrap: break-word !important;
+    white-space: pre-wrap !important;
+}
+
+/* SQL分组内的json-right样式调整 */
+#trace-tools-box .sql-group-content > li > .json-right {
+    width: 80px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 0 !important;
+    margin: 0 0 0 12px !important;
+    font-size: 12px !important;
+    color: #94a3b8 !important;
+    text-align: right !important;
+    flex-shrink: 0 !important;
+    line-height: 1.6 !important;
+}
+
+/* SQL分组内的展开按钮包装器 - 隐藏SQL分组内的展开按钮 */
+#trace-tools-box .sql-group-content > li > .json-label .expand-btn-wrapper {
+    display: none !important;
+}
+
+/* SQL分组内容中的div容器（用于包含分组） */
+#trace-tools-box .tabs-content > ul > div.sql-group {
+    display: block !important;
+}
+
+/* 确保ul内的div.sql-group不被当作li元素处理 */
+#trace-tools-box ul > div {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 /* ========================================
@@ -407,50 +684,6 @@
 
 #trace-tools-box pre.show {
     display: block !important;
-}
-
-/* ========================================
-   展开/收起文本
-   ======================================== */
-#trace-tools-box .truncated {
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-
-#trace-tools-box .expanded {
-    white-space: normal !important;
-}
-
-#trace-tools-box .expand-btn {
-    color: #3b82f6 !important;
-    cursor: pointer !important;
-    margin-left: 6px !important;
-    border: none !important;
-    background: none !important;
-    padding: 2px 8px !important;
-    font-size: 12px !important;
-    display: inline !important;
-    border-radius: 4px !important;
-    transition: all 0.2s ease !important;
-    font-weight: 500 !important;
-}
-
-#trace-tools-box .expand-btn:hover {
-    color: #60a5fa !important;
-    background-color: #1e293b !important;
-    text-decoration: none !important;
-}
-
-#trace-tools-box .expand-btn::before {
-    content: '▶' !important;
-    font-size: 10px !important;
-    margin-right: 4px !important;
-    display: inline-block !important;
-}
-
-#trace-tools-box .expanded .expand-btn::before {
-    content: '▼' !important;
 }
 
 /* ========================================

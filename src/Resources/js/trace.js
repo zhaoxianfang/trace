@@ -209,26 +209,71 @@ if (window.__traceInitialized) {
         labels.forEach(label => {
             if (!label) return;
 
+            // 跳过SQL分组内的label
+            if (label.closest('.sql-group-content')) return;
+
             try {
+                // 移除已有的展开按钮（避免重复初始化）
+                const existingBtn = label.querySelector('.expand-btn');
+                if (existingBtn) return;
+
                 const text = label.textContent;
                 if (text.length > CONFIG.textMaxLength) {
                     label.full = text;
                     label.short = text.substring(0, CONFIG.textMaxLength) + '...';
-                    label.innerHTML = label.short + '<span class="expand-btn">展开</span>';
+
+                    // 创建展开按钮包装器，确保按钮始终可见
+                    const wrapper = document.createElement('span');
+                    wrapper.className = 'expand-btn-wrapper';
+                    const btn = document.createElement('span');
+                    btn.className = 'expand-btn';
+                    btn.textContent = '展开';
+                    wrapper.appendChild(btn);
+
+                    // 清空并重新构建内容
+                    label.textContent = label.short;
+                    label.appendChild(wrapper);
                     label.classList.add('truncated');
 
-                    label.addEventListener('click', (e) => {
-                        if (e.target.classList.contains('expand-btn')) {
-                            e.stopPropagation();
-                            const expanded = label.classList.toggle('expanded');
-                            label.innerHTML = (expanded ? label.full : label.short) +
-                                `<span class="expand-btn">${expanded ? '收起' : '展开'}</span>`;
-                            expanded ? label.classList.remove('truncated') : label.classList.add('truncated');
-                        }
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const expanded = label.classList.toggle('expanded');
+                        btn.textContent = expanded ? '收起' : '展开';
+                        label.textContent = (expanded ? label.full : label.short);
+                        label.appendChild(wrapper);
+                        expanded ? label.classList.remove('truncated') : label.classList.add('truncated');
                     });
                 }
             } catch (e) {
                 // console.error('[Trace] Error initializing text expansion for label:', e);
+            }
+        });
+
+        // 初始化SQL分组功能
+        initSqlGroups();
+    }
+
+    /**
+     * 初始化SQL分组展开/收起
+     */
+    function initSqlGroups() {
+        const groupHeaders = safeQuerySelectorAll('#trace-tools-box .sql-group-header');
+
+        groupHeaders.forEach(header => {
+            if (!header) return;
+
+            try {
+                header.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    const group = header.parentElement;
+                    if (group && group.classList.contains('sql-group')) {
+                        group.classList.toggle('collapsed');
+                    }
+                });
+            } catch (e) {
+                // console.error('[Trace] Error initializing SQL group header:', e);
             }
         });
     }

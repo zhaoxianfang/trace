@@ -1,23 +1,75 @@
 # 系统追踪调试工具 Trace
 
-## 配置定义【可选】
-> 发布 `config/trace.php` 配置文件，所有的配置项都可以不定义或者直接不创建配置文件，则会自动使用默认配置项；
+> 基于 Laravel 11+ 和 PHP 8.2+ 开发的强大调试工具，提供 SQL 分组、性能分析、异常追踪等全方位调试能力。
 
-```php
+## 功能特性
+
+- 🎯 **SQL 智能分组** - 自动将缓存和会话相关的 SQL 语句分组展示，支持手风琴式展开/收起
+- 🔍 **代码追踪调试** - 使用 `trace()` 函数快速调试任意变量
+- 📊 **性能监控** - 实时显示请求时间、内存消耗、SQL 查询时间等
+- 🚨 **异常处理** - 优雅接管 Laravel 异常，提供详细的错误堆栈
+- 🎨 **现代化界面** - 响应式设计，适配移动端和桌面端
+- ⚡ **零配置开箱即用** - 无需复杂配置，开箱即用
+
+## 配置定义【可选】
+
+发布 `config/trace.php` 配置文件，所有的配置项都可以不定义或者直接不创建配置文件，则会自动使用默认配置项；
+
+```bash
 php artisan vendor:publish --provider="zxf\Trace\Providers\TraceServiceProvider"
 ```
 
+### 配置选项
+
+```php
+return [
+    /**
+     * 是否开启 trace 调试功能
+     * 默认: true
+     */
+    'enabled' => true,
+
+    /**
+     * 使用自定义处理的命名空间
+     * 例如在 App\Exceptions\Handler->render 中自定义处理 Trace 检测到的异常
+     * 默认: Modules
+     */
+    'namespace' => 'Modules',
+
+    /**
+     * 自定义处理 Trace 调试产生的数据
+     * 默认: 空
+     * 
+     * 示例:
+     * 'end_handle_class' => \App\Services\TraceEndService::class,
+     */
+    'end_handle_class' => '',
+
+    /**
+     * 代码追踪调试使用的编辑器
+     * 默认: phpstorm
+     * 
+     * 支持: "phpstorm", "vscode", "vscode-insiders", "vscode-remote",
+     *       "vscode-insiders-remote", "vscodium", "textmate", "emacs",
+     *       "sublime", "atom", "nova", "macvim", "idea", "netbeans",
+     *       "xdebug", "espresso"
+     */
+    'editor' => 'phpstorm',
+];
+```
+
+## 启用条件
+
+Trace 调试功能的启用条件（可查看 `is_enable_trace` 函数）：
+
+1. **CLI 环境下直接关闭** - 命令行执行时不显示调试信息
+2. **最高优先级** - 手动定义了 `app.trace` 配置参数时使用该配置
+3. **默认判断** - 当 APP_ENV 不是 production（生产环境）或 APP_DEBUG=true，且不是 AJAX 请求时启用
+
 ## 一、数据调试
 
-是否开启`trace`的调试的判定条件(可查看`is_enable_trace`函数)；
-- 1、`cli`命令行环境下直接关闭
-- 2、手动定义了 `app.trace` 配置参数[最高优先级]
-  - 如果在 config 文件夹下的 `app.php` 文件中配置了 `trace` 参数为 `true|false` 则使用此配置项；
-- 3、未定义配置的判定；
-  - APP_ENV 的配置项 不是 production (生产环境)  或者 开启了调试APP_DEBUG=true
-  - 不是 ajax 请求
+### 响应/输出 视图/数据
 
-###  响应/输出 视图/数据
 ```php
 $title = '个人信息';
 $list = [
@@ -34,48 +86,73 @@ $list = [
     'email' => '1234567890@qq.com',
     'is_active' => false,
 ];
-// 输出 调试html
+
+// 输出调试 HTML
 app('trace')->outputDebugHtml($list, $title);
 
-$code = 200;
-$message = '操作成功';
-// 响应输出json
+// 响应输出 JSON
 app('trace')->respJson($message, $code)->send();
+
 // 响应输出视图
 app('trace')->respView($message, $code)->send();
 ```
 
 <p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/trace_message.png" width="400px" alt="Trace Debug"></a></p>
 
-
 ### 代码调试
-> 使用辅助函数 `trace` 进行调整,
+
+使用辅助函数 `trace` 进行调试：
 
 ```php
 // 支持任意个不同类型的参数
 trace('this is a test string');
 trace(['this is a test array1']);
-trace('string',['array1'],['array2'],'string2');
+trace('string', ['array1'], ['array2'], 'string2');
 ```
 
-> 说明： 如果是普通的get请求(非ajax请求)，会直接在页面底部展示调试信息； 如果是其他请求的 会记录到 `laravel` 的本地日志文件中，以日志的方式呈现
+**说明：** 如果是普通的 GET 请求（非 AJAX 请求），会直接在页面底部展示调试信息；如果是其他请求，会记录到 Laravel 的本地日志文件中，以日志的方式呈现。
 
 <p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/trace_data.png" width="400px" alt="Trace Debug"></a></p>
 
+### SQL 智能分组
 
-### SQL预览
+系统会自动识别并分组以下类型的 SQL 语句：
+
+1. **缓存查询** - 包含 `cache` 表名或 `cache_key`、`cache_value` 字段的查询
+2. **会话查询** - 包含 `sessions` 表名或 `session_id`、`payload` 字段的查询
+3. **业务查询** - 其他所有 SQL 查询
+
+**分组特性：**
+- 🎨 不同类型分组使用不同的颜色标识
+- 🔄 手风琴式展开/收起，默认展开
+- 📊 显示每个分组内的 SQL 条数
+- ⚡ 点击分组标题即可切换显示状态
+
+**示例代码：**
+
 ```php
 public function test(Request $request)
 {
     try {
         DB::beginTransaction();
-        DB::table('users')->first();
+        
+        // 业务查询 - 不会分组
+        DB::table('users')->where('id', 1)->first();
+        
+        // 缓存查询 - 自动分组到"缓存查询"
+        DB::table('cache')->where('key', 'user_1')->first();
+        DB::table('cache_2024')->where('key', 'settings')->first();
+        
+        // 会话查询 - 自动分组到"会话查询"
+        DB::table('sessions')->where('id', session()->getId())->first();
+        DB::table('sessions')->where('user_id', auth()->id())->first();
+        
         DB::commit();
         return '';
     } catch (\Exception $exception) {
         DB::rollback();
         return $this->error([
-            'code'    => 500,
+            'code' => 500,
             'message' => $exception->getMessage(),
         ]);
     }
@@ -84,9 +161,8 @@ public function test(Request $request)
 
 <p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/trace_sql.png" width="400px" alt="Trace Debug"></a></p>
 
-
-
 ### 异常追踪
+
 ```php
 public function test(Request $request)
 {
@@ -97,13 +173,13 @@ public function test(Request $request)
 
 <p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/trace_exception.png" width="400px" alt="Trace Debug"></a></p>
 
-
 ## 二、Laravel 11+ 优雅接管异常处理
 
 ### 接入
-在引导文件`bootstrap/app.php`中接入异常处理
 
-> 引入 zxf/trace 包后，默认会自动处理 laravel 的异常；
+在引导文件 `bootstrap/app.php` 中接入异常处理：
+
+> 引入 `zxf/trace` 包后，默认会自动处理 Laravel 的异常。
 
 ```php
 ->withExceptions(function (Exceptions $exceptions): void {
@@ -113,6 +189,7 @@ public function test(Request $request)
 ```
 
 #### 默认模式
+
 ```php
 ->withExceptions(function (Exceptions $exceptions): void {
    // 异常处理类
@@ -121,13 +198,14 @@ public function test(Request $request)
 ```
 
 #### 自定义处理指定错误码
+
 ```php
 ->withExceptions(function (Exceptions $exceptions): void {
     // 接入异常处理类 - 自定义处理部分异常状态码的逻辑
     /**
      * 初始化 Laravel 11+ 异常处理类
      *
-     * @param  Exceptions  $exceptions  lv11 + 异常类
+     * @param  Exceptions  $exceptions  Laravel 11+ 异常类
      * @param  Closure|null  $customHandleCallback  想要自定义处理的回调函数：回调 ($code, $message);
      * @param  array  $customHandleCode  需要自定义回调处理的错误码；空表示由接管所有的错误码回调处理，不为空表示只接管指定的错误码回调处理；eg: [401], [401,403]
      * @param  array  $dontReport  不需要被报告的异常类列表
@@ -138,7 +216,7 @@ public function test(Request $request)
                 return to_route('login');
             }
         }, 
-        [401, 403], // 需要自定义处理的异常状态码,为表示处理所有的异常状态码
+        [401, 403], // 需要自定义处理的异常状态码,为空表示处理所有的异常状态码
         [
             // 定义不需要报告的异常类
             // Your\Path\InvalidException::class
@@ -149,8 +227,9 @@ public function test(Request $request)
 
 ### 异常日志处理
 
-定义好`Laravel` 默认的日志处理 `Illuminate\Support\Facades\Log` , 异常日志走定义好的默认渠道，默认渠道记录异常时 才走本地日志渠道`stack`
-```
+定义好 Laravel 默认的日志处理 `Illuminate\Support\Facades\Log`，异常日志走定义好的默认渠道，默认渠道记录异常时才走本地日志渠道 `stack`。
+
+```php
 use Illuminate\Support\Facades\Log;
 
 // 记录日志
@@ -161,3 +240,210 @@ try {
     Log::channel('stack')->error($message, $content);
 }
 ```
+
+## 三、高级功能
+
+### 3.1 自定义 Trace 数据处理
+
+可以通过配置 `end_handle_class` 来自定义处理 Trace 产生的数据：
+
+```php
+// config/trace.php
+return [
+    'end_handle_class' => \App\Services\TraceEndService::class,
+];
+
+// app/Services/TraceEndService.php
+namespace App\Services;
+
+use Illuminate\Support\Facades\Log;
+
+class TraceEndService
+{
+    public function handle(array $trace = []): void
+    {
+        // 自定义处理逻辑
+        // 例如：发送到外部监控系统
+        // Log::channel('stack')->debug("===== [Trace]调试: ===== ", $trace);
+    }
+}
+```
+
+### 3.2 响应式设计
+
+Trace 调试面板完全支持响应式设计：
+
+- **桌面端** - 完整功能展示，支持多列布局
+- **移动端** - 自动适配小屏幕，单列布局，优化触摸交互
+- **平板端** - 智能调整布局，平衡空间和功能
+
+### 3.3 键盘快捷键
+
+- **ESC** - 关闭调试面板
+
+### 3.4 编辑器集成
+
+支持多种编辑器，点击文件路径可直接跳转到编辑器对应位置：
+
+- PhpStorm
+- VS Code
+- Sublime Text
+- Atom
+- 等其他编辑器
+
+配置方式（在 `config/trace.php` 中）：
+
+```php
+'editor' => 'phpstorm', // 或 'vscode', 'sublime', 'atom' 等
+```
+
+## 四、性能优化
+
+### 4.1 内存管理
+
+- 请求级别的数据隔离，避免内存泄漏
+- 自动清理已处理的请求数据
+- 静态属性优化，减少内存占用
+
+### 4.2 性能监控
+
+自动收集并展示以下性能指标：
+
+- 请求总耗时
+- SQL 查询总耗时
+- 内存消耗
+- 吞吐率（req/s）
+- 磁盘使用情况（非 Windows 系统）
+
+### 4.3 SQL 优化
+
+- 自动检测重复 SQL
+- 分组展示缓存和会话查询
+- 显示查询执行时间
+
+## 五、安全特性
+
+### 5.1 数据脱敏
+
+- 数据库连接信息自动脱敏
+- IP 地址脱敏显示
+- 敏感信息自动过滤
+
+### 5.2 XSS 防护
+
+所有输出内容经过 HTML 转义处理，防止 XSS 攻击。
+
+### 5.3 路径验证
+
+增强的目录遍历保护，防止恶意路径访问。
+
+## 六、兼容性
+
+### 6.1 Laravel 版本
+
+- Laravel 11.x ✅
+- Laravel 10.x ✅
+- Laravel 9.x ✅
+
+### 6.2 PHP 版本
+
+- PHP 8.2 ✅
+- PHP 8.1 ✅
+- PHP 8.0 ✅
+
+### 6.3 运行环境
+
+- Apache ✅
+- Nginx ✅
+- Swoole ✅
+- Octane ✅
+
+## 七、常见问题
+
+### Q1: 为什么我的页面看不到 Trace 面板？
+
+**A:** 检查以下几点：
+1. 确认不是生产环境（APP_ENV != production）或 APP_DEBUG=true
+2. 确认不是 AJAX 请求
+3. 确认配置文件中 `enabled` 为 `true`
+4. 确认不是命令行执行
+
+### Q2: SQL 分组功能如何使用？
+
+**A:** SQL 分组是自动的，系统会识别包含以下特征的 SQL：
+- 缓存表：`cache`、`cache_*` 或包含 `cache_key`、`cache_value`
+- 会话表：`sessions` 或包含 `session_id`、`payload`、`user_id`
+
+### Q3: 如何自定义 SQL 分组规则？
+
+**A:** 可以修改 `Handle.php` 中的 `getSqlInfo()` 方法，在 `$groupPatterns` 数组中添加自定义规则。
+
+### Q4: Trace 会影响生产环境性能吗？
+
+**A:** 不会，Trace 只在非生产环境或调试模式下启用，生产环境会自动关闭。
+
+### Q5: 如何禁用特定类型的 SQL 监听？
+
+**A:** 可以在配置文件中添加自定义配置，然后在 `listenSql()` 方法中根据配置过滤。
+
+## 八、更新日志
+
+### v2.0.0 (2025)
+
+**新功能：**
+- ✨ SQL 智能分组功能
+- ✨ 手风琴式分组展示
+- ✨ 响应式展开按钮优化
+- ✨ 移动端适配优化
+
+**改进：**
+- 🔧 代码质量提升（Laravel 11+ 和 PHP 8.2+ 标准）
+- 🔧 文档完善
+- 🔧 性能优化
+- 🔧 安全增强
+
+**修复：**
+- 🐛 修复展开按钮在小屏幕下不显示的问题
+- 🐛 修复内存泄漏问题
+- 🐛 修复 SQL 参数替换顺序问题
+
+## 九、贡献指南
+
+欢迎贡献代码、报告 Bug 或提出新功能建议！
+
+### 开发环境设置
+
+```bash
+# 克隆仓库
+git clone https://github.com/yourusername/trace.git
+cd trace
+
+# 安装依赖
+composer install
+
+# 运行测试
+composer test
+```
+
+### 代码规范
+
+- 遵循 PSR-12 编码规范
+- 使用 PHP 8.2+ 特性
+- 所有方法必须添加 PHPDoc 注释
+- 测试覆盖率需达到 80% 以上
+
+## 十、许可证
+
+MIT License
+
+## 十一、联系方式
+
+- 作者: weisifang.com
+- 官网: https://www.yoc.cn
+- 邮箱: support@weisifang.com
+
+---
+
+<p align="center">
+  <strong>本页面由 <a href="https://weisifang.com/" target="_blank">weisifang.com</a> 提供支持</strong>
+</p>

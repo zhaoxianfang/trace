@@ -53,6 +53,12 @@ EOT;
 <ul>
 EOT;
             foreach ($tabs as $k => $item) {
+                // 处理SQL分组
+                if (is_array($item) && isset($item['type']) && $item['type'] == 'sql_group') {
+                    $html .= $this->renderSqlGroup($item);
+                    continue;
+                }
+
                 $html .= '<li>';
                 try {
                     if (is_array($item) && ! empty($item['type']) && $item['type'] == 'trace') {
@@ -77,7 +83,7 @@ EOT;
                             }
                         }else{
                             if(!empty(array_diff(array_keys($item), ['label', 'right']))){
-                                // $arrayString = json_encode($item, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+                                // $arrayString = json_encode($item, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
                                 $arrayString = json_encode($item, JSON_UNESCAPED_UNICODE);
                                 $html .= <<<EOT
     <div class="json-arrow-pre-wrapper">
@@ -109,6 +115,51 @@ EOT;
 
         $html .= <<<'EOT'
       </div></div>
+EOT;
+
+        return $html;
+    }
+
+    /**
+     * 渲染SQL分组
+     *
+     * @param  array  $group 分组数据
+     * @return string HTML字符串
+     */
+    protected function renderSqlGroup(array $group): string
+    {
+        $groupName = htmlspecialchars($group['name'], ENT_QUOTES, 'UTF-8');
+        $groupClass = htmlspecialchars($group['class'], ENT_QUOTES, 'UTF-8');
+        $sqlCount = (int) $group['count'];
+        $collapsed = $group['collapsed'] ?? false ? 'collapsed' : '';
+
+        $html = <<<EOT
+<div class="sql-group {$groupClass} {$collapsed}">
+  <div class="sql-group-header">
+    <div class="sql-group-title">
+      <span>{$groupName}</span>
+      <span class="sql-group-count">{$sqlCount}条</span>
+    </div>
+    <span class="sql-group-toggle">▼</span>
+  </div>
+  <ul class="sql-group-content">
+EOT;
+
+        foreach ($group['sqls'] as $sqlItem) {
+            $sql = htmlspecialchars($sqlItem['label'] ?? '', ENT_QUOTES, 'UTF-8');
+            $time = htmlspecialchars($sqlItem['right'] ?? '-', ENT_QUOTES, 'UTF-8');
+
+            $html .= <<<EOT
+    <li>
+      <span class="json-label">{$sql}</span>
+      <span class="json-right">{$time}</span>
+    </li>
+EOT;
+        }
+
+        $html .= <<<EOT
+  </ul>
+</div>
 EOT;
 
         return $html;

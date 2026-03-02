@@ -13,8 +13,8 @@ trait ExceptionNotifyTrait
     #[NoReturn]
     public function showExitMessage(Throwable $e): void
     {
-        $code = $this->code ?? 500;
-        $message = $this->isSysErr ? $e->getMessage() : $this->message;
+        $code = self::$code ?? 500;
+        $message = self::$isSysErr ? $e->getMessage() : self::$message;
         $extendedMessage = '';
 
         if (config('app.debug')) {
