@@ -4,11 +4,18 @@ namespace zxf\Trace\Traits;
 
 use Exception;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 /**
- * 把trace调试数据渲染到响应的html中
+ * Trace响应渲染Trait
+ *
+ * 提供Trace调试数据的HTML渲染功能，包括：
+ * - 渲染调试面板到响应页面
+ * - 处理SQL分组展示
+ * - 注入CSS和JS资源
+ * - 支持AJAX和JSON响应
+ *
+ * @package zxf\Trace\Traits
  */
 trait TraceResponseTrait
 {

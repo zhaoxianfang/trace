@@ -24,6 +24,28 @@ use zxf\Trace\Traits\ExceptionShowDebugHtmlTrait;
 use zxf\Trace\Traits\ExceptionTrait;
 use zxf\Trace\Traits\TraceResponseTrait;
 
+/**
+ * Trace 调试处理器
+ *
+ * 核心功能:
+ * - 监听和记录 SQL 查询（支持分组）
+ * - 监听和记录模型事件
+ * - 收集请求性能数据
+ * - 提供调试信息输出
+ *
+ * 注意事项:
+ * - 使用单例模式，但通过 requestId 进行请求级别的状态隔离
+ * - 支持常驻内存环境（如 Octane、Swoole）
+ *
+ * @property-read int $startTime 请求开始时间（微秒时间戳）
+ * @property-read int $startMemory 请求开始内存使用量（字节）
+ * @property-read string $requestId 当前请求的唯一标识符
+ * @property-read array $sqlList SQL查询列表
+ * @property-read array $messages 调试消息列表
+ * @property-read Throwable|null $currentException 当前异常对象
+ *
+ * @package zxf\Trace
+ */
 class Handle
 {
     use AppEndTrait;
@@ -94,11 +116,12 @@ class Handle
     /**
      * 实例化并初始化请求级别状态
      *
-     * @param  Application  $app
+     * @param  Application|null  $app
+     * @param  array  $config
      *
      * @throws BindingResolutionException
      */
-    public function __construct(mixed $app = null, array $config = [])
+    public function __construct(?Application $app = null, array $config = [])
     {
         // 生成唯一的请求 ID
         $this->requestId = uniqid('trace_', true);
@@ -177,6 +200,9 @@ class Handle
                 }
             });
         } catch (Exception $e) {
+            if (config('app.debug', false)) {
+                error_log('[Trace] SQL监听错误: ' . $e->getMessage());
+            }
         }
 
         try {
@@ -219,6 +245,9 @@ class Handle
                 }
             });
         } catch (Exception $e) {
+            if (config('app.debug', false)) {
+                error_log('[Trace] 事务监听错误: ' . $e->getMessage());
+            }
         }
 
         // 标记事件监听器已注册
@@ -230,7 +259,7 @@ class Handle
      *
      * @param  QueryExecuted  $event
      */
-    private function addQuery($event): void
+    private function addQuery(QueryExecuted $event): void
     {
         try {
             // 获取绑定的参数
@@ -252,7 +281,9 @@ class Handle
                 // 'connection' => $event->connectionName, // eg: mysql
             ];
         } catch (\Throwable $e) {
-            // 静默处理，避免影响主流程
+            if (config('app.debug', false)) {
+                error_log('[Trace] SQL记录错误: ' . $e->getMessage());
+            }
         }
     }
 
@@ -293,7 +324,20 @@ class Handle
         }
 
         if (is_string($binding)) {
-            // 转义单引号防止SQL注入显示错误
+            // 限制字符串长度防止内存溢出
+            if (strlen($binding) > 1000) {
+                $binding = substr($binding, 0, 1000) . '... [TRUNCATED]';
+            }
+            // 使用PDO的quote方法进行更安全的转义
+            try {
+                $pdo = DB::getPdo();
+                if ($pdo) {
+                    return $pdo->quote($binding);
+                }
+            } catch (\Throwable $e) {
+                // PDO不可用时的回退方案
+            }
+            // 回退到基本转义
             $binding = str_replace("'", "''", $binding);
             return "'{$binding}'";
         }
@@ -324,7 +368,7 @@ class Handle
      * @param  \Illuminate\Database\Connection  $connection
      * @return void
      */
-    private function addTransactionQuery($event, $connection): void
+    private function addTransactionQuery(string $event, $connection): void
     {
         try {
             if (! $connection) {
@@ -338,11 +382,13 @@ class Handle
                 'sql' => '['.$connectionName.':'.$driver.'] '.$event,
                 'type' => 'Transaction',
                 'time' => 0,
-                // 'connection' => $connection->getName(),
+                //                 'connection' => $connection->getName(),
                 // 'driver'     => $connection->getConfig('driver'),
             ];
         } catch (\Throwable $e) {
-            // 静默处理，避免影响主流程
+            if (config('app.debug', false)) {
+                error_log('[Trace] 事务查询错误: ' . $e->getMessage());
+            }
         }
     }
 
@@ -487,8 +533,15 @@ class Handle
         return '';
     }
 
-    // 获取空状态下的tab 提示信息
-    private function getEmptyTips(?string $tabName=''):array
+    /**
+     * 获取空状态下的tab提示信息
+     *
+     * @param string|null $tabName 标签名称，如 'messages', 'sql', 'view', 'exception' 等
+     * @return array 包含提示信息的数组，格式: ['提示消息', '额外提示']
+     *
+     * @throws \InvalidArgumentException 当标签名称无效时抛出（可选）
+     */
+    private function getEmptyTips(?string $tabName = ''): array
     {
         [$message, $tips] = match (strtolower($tabName)) {
             'messages' => ['暂无调试内容', '使用 trace(mixed ...$args) 函数进行调试'],
@@ -603,7 +656,13 @@ class Handle
         return $base;
     }
 
-    private function maskIP($ip)
+    /**
+     * IP地址掩码处理，隐藏中间部分
+     *
+     * @param  string  $ip
+     * @return string
+     */
+    private function maskIP(string $ip): string
     {
         // 检查是否是空或特殊的地址
         if (empty($ip) || strlen($ip) < 5 || $ip === 'localhost' || $ip === '127.0.0.1') {
@@ -862,7 +921,12 @@ class Handle
         return [$sqlList, $sqlTimes];
     }
 
-    private function getSessionInfo()
+    /**
+     * 获取会话信息
+     *
+     * @return array
+     */
+    private function getSessionInfo(): array
     {
         try {
             $session = app('session');

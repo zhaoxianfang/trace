@@ -24,6 +24,7 @@ class TraceServiceProvider extends ServiceProvider
 {
     /**
      * 服务提供者是否延迟加载（false 表示立即加载）
+     * Laravel 11+ 已移除此属性，保留兼容性
      */
     protected bool $defer = false;
 
@@ -79,15 +80,36 @@ class TraceServiceProvider extends ServiceProvider
         // 设置别名，可以通过 app('trace') 访问
         $this->app->alias(Handle::class, 'trace');
 
-        // Laravel 11+ 使用新的异常处理机制
-        // 通过 withExceptions() 方法配置，而不是直接替换 ExceptionHandler
-        // 这里仍然提供 TraceExceptionHandler 以便兼容旧版本，但主要依赖 CustomExceptionHandler
+        // 检查 Laravel 版本
+        $laravelVersion = $this->app->version();
+        $isLaravel11OrHigher = version_compare($laravelVersion, '11.0.0', '>=');
+
+        if ($isLaravel11OrHigher) {
+            // Laravel 11+ 使用新的异常处理机制
+            // 通过 bootstrap/app.php 的 withExceptions() 配置
+            // 这里不直接替换 ExceptionHandler，提供兼容性支持
+            if ($this->app->runningInConsole() || $this->app->environment('testing')) {
+                // 仅在控制台或测试环境注册 TraceExceptionHandler
+                $this->registerLegacyExceptionHandler();
+            }
+        } else {
+            // Laravel 10 及以下版本
+            $this->registerLegacyExceptionHandler();
+        }
+    }
+
+    /**
+     * 注册传统的异常处理器（用于 Laravel 10 及以下）
+     *
+     * @return void
+     */
+    private function registerLegacyExceptionHandler(): void
+    {
         $this->app->singleton(ExceptionHandler::class, function ($app) {
             // 尝试获取 Laravel 原始的异常处理器
             try {
                 $originalHandler = $app->make(\Illuminate\Foundation\Exceptions\Handler::class);
             } catch (\Throwable $e) {
-                // Laravel 11+ 可能不使用传统的 Handler
                 // 返回一个最小实现的处理器
                 $originalHandler = new class implements \Illuminate\Contracts\Debug\ExceptionHandler {
                     public function report(\Throwable $e): void {}
@@ -111,8 +133,12 @@ class TraceServiceProvider extends ServiceProvider
      *
      * @param  string  $middleware  中间件类名
      */
-    protected function registerMiddleware($middleware): void
+    protected function registerMiddleware(string $middleware): void
     {
+        // 检查 Laravel 版本
+        // $laravelVersion = $this->app->version();
+        // $isLaravel11OrHigher = version_compare($laravelVersion, '11.0.0', '>=');
+
         // 获取 HTTP 内核实例
         $kernel = $this->app->make(Kernel::class);
 

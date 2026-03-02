@@ -153,7 +153,9 @@ class TraceExceptionHandler implements ExceptionHandler
                 return $callRes;
             }
         } catch (Throwable $err) {
-            // 忽略回调中的错误
+            if (config('app.debug', false)) {
+                error_log('[Trace] 回调处理错误: ' . $err->getMessage());
+            }
         }
 
         try {
@@ -166,6 +168,9 @@ class TraceExceptionHandler implements ExceptionHandler
                 }
             }
         } catch (Throwable $err) {
+            if (config('app.debug', false)) {
+                error_log('[Trace] 模块异常处理错误: ' . $err->getMessage());
+            }
             // 可能自定义接管的异常类也有异常，忽略并继续处理
         }
 
