@@ -43,13 +43,13 @@ trait ExceptionCustomCallbackTrait
     {
         if (! empty($this->customHandleCallback) && $this->customHandleCallback instanceof Closure) {
             if (! empty($this->customHandleCode)) {
-                if (in_array(self::$code, $this->customHandleCode)) {
+                if (in_array($this->code, $this->customHandleCode)) {
                     // 调用自定义处理闭包函数
-                    return call_user_func($this->customHandleCallback, self::$code, self::$message, $e);
+                    return call_user_func($this->customHandleCallback, $this->code, $this->message, $e);
                 }
             } else {
                 // 调用自定义处理闭包函数
-                return call_user_func($this->customHandleCallback, self::$code, self::$message, $e);
+                return call_user_func($this->customHandleCallback, $this->code, $this->message, $e);
             }
         }
 

@@ -59,23 +59,24 @@ trait ExceptionShowDebugHtmlTrait
             // 处理代码类型（JSON、数组等）
             if ($row['type'] == 'code') {
                 $content .= '<li class="info-item">
-                    <span class="info-label">'.$row['label'].'：</span>
-                    <div class="info-value"><pre><code>'.$row['value'].'</code></pre></div>
+                    <span class="info-label">'.htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8').'：</span>
+                    <div class="info-value"><pre><code>'.htmlspecialchars($row['value'], ENT_QUOTES, 'UTF-8').'</code></pre></div>
                 </li>';
             }
             // 处理调试文件链接类型（可点击跳转到编辑器）
             elseif ($row['type'] == 'debug_file') {
-                $editor = config('trace.editor') ?? 'phpstorm';
+                $editor = htmlspecialchars(config('trace.editor') ?? 'phpstorm', ENT_QUOTES, 'UTF-8');
                 $content .= '<li class="info-item">
-                    <span class="info-label">'.$row['label'].'：</span>
-                    <div class="info-value">'.'<a href="'.$editor.'://open?file='.urlencode($row['file']).'&amp;line='.$row['line'].'" class="phpdebugbar-link">'.($row['value']).'</a>'.'</div>
+                    <span class="info-label">'.htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8').'：</span>
+                    <div class="info-value">'.'<a href="'.$editor.'://open?file='.urlencode($row['file']).'&amp;line='.intval($row['line']).'" class="phpdebugbar-link">'.htmlspecialchars($row['value'], ENT_QUOTES, 'UTF-8').'</a>'.'</div>
                 </li>';
             }
             // 处理普通字符串类型
             else {
+                $safeValue = is_string($row['value']) ? htmlspecialchars($row['value'], ENT_QUOTES, 'UTF-8') : htmlspecialchars(var_export($row['value'], true), ENT_QUOTES, 'UTF-8');
                 $content .= '<li class="info-item">
-                    <span class="info-label">'.$row['label'].'：</span>
-                    <div class="info-value">'.(is_string($row['value']) ? $row['value'] : var_export($row['value'], true)).'</div>
+                    <span class="info-label">'.htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8').'：</span>
+                    <div class="info-value">'.$safeValue.'</div>
                 </li>';
             }
         }

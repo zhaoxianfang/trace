@@ -62,18 +62,20 @@ class TraceServiceProvider extends ServiceProvider
      * 执行时机：服务容器注册阶段
      *
      * 注意：
-     * 1. Trace 处理器注册为单例，确保整个请求周期内使用同一个实例
-     * 2. 异常处理器也注册为单例，避免重复创建
-     * 3. 两者协同工作：TraceExceptionHandler 包装原始异常处理器
+     * 1. Trace 处理器注册为请求作用域，确保每个请求使用独立的实例
+     * 2. 这解决了在 Laravel Octane、Swoole 等常驻内存环境下的数据污染问题
+     * 3. 异常处理器也注册为单例，避免重复创建
+     * 4. 两者协同工作：TraceExceptionHandler 包装原始异常处理器
      */
     public function register(): void
     {
         // 注册路由服务提供者
         $this->app->register(RouteServiceProvider::class);
 
-        // 注册 Trace 处理器为单例（app('trace')）
-        // 注意：Handle 单例会被多个请求共享，因此内部使用 requestId 进行状态隔离
-        $this->app->singleton(Handle::class, function ($app) {
+        // 注册 Trace 处理器为请求作用域（app('trace')）
+        // 每个请求都会创建新实例，确保请求级别的状态隔离
+        // 这对于 Octane、Swoole 等常驻内存环境非常重要
+        $this->app->scoped(Handle::class, function ($app) {
             return new Handle($app);
         });
         // 设置别名，可以通过 app('trace') 访问

@@ -63,7 +63,8 @@ class Handle
 
     protected array $sqlList = [];
 
-    protected static array $modelList = [];
+    // 模型列表 - 改为实例变量，避免静态变量导致的内存泄漏
+    protected array $modelList = [];
 
     // 请求 ID，用于区分不同请求
     protected ?string $requestId = null;
@@ -78,12 +79,6 @@ class Handle
 
     /** @var Response */
     protected $response;
-
-    // 全局标记：事件监听器是否已注册
-    protected static bool $eventListenersRegistered = false;
-
-    // 全局标记：当前正在处理的请求 ID
-    protected static ?string $currentRequestId = null;
 
     // 请求计数器，用于追踪请求次数
     protected static int $requestCounter = 0;
@@ -100,8 +95,7 @@ class Handle
         // 生成唯一的请求 ID
         $this->requestId = uniqid('trace_', true);
 
-        // 更新全局当前请求 ID
-        self::$currentRequestId = $this->requestId;
+        // 更新请求计数器
         self::$requestCounter++;
 
         if (is_enable_trace()) {
@@ -125,23 +119,16 @@ class Handle
     /**
      * 监听模型事件
      *
-     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
+     * 注意：事件监听器会在每个请求实例中注册，通过 requestId 隔离数据
      */
     public function listenModelEvent(): void
     {
-        // 检查是否已经注册过事件监听器
-        if (self::$eventListenersRegistered) {
-            return;
-        }
-
         $events = ['retrieved', 'creating', 'created', 'updating', 'updated', 'saving', 'saved', 'deleting', 'deleted', 'restoring', 'restored', 'replicating'];
 
         foreach ($events as $event) {
             Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
                 // 只在当前请求 ID 匹配时才记录
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->logModelEvent($listenString, $model, $event);
-                }
+                $this->logModelEvent($listenString, $model, $event);
             });
         }
     }
@@ -149,17 +136,12 @@ class Handle
     /**
      * 监听 SQL事件
      *
-     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
+     * 注意：事件监听器会在每个请求实例中注册，通过 requestId 隔离数据
      *
      * @return void
      */
     protected function listenSql(): void
     {
-        // 检查是否已经注册过事件监听器
-        if (self::$eventListenersRegistered) {
-            return;
-        }
-
         $events = isset($this->app['events']) ? $this->app['events'] : null;
         if (! $events) {
             return;
@@ -168,10 +150,7 @@ class Handle
         try {
             // 监听SQL执行
             $events->listen(function (QueryExecuted $query) {
-                // 只在当前请求 ID 匹配时才记录
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addQuery($query);
-                }
+                $this->addQuery($query);
             });
         } catch (Exception $e) {
         }
@@ -179,22 +158,16 @@ class Handle
         try {
             // 监听事务开始
             $events->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($transaction) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Begin Transaction', $transaction->connection);
-                }
+                $this->addTransactionQuery('Begin Transaction', $transaction->connection);
             });
             // 监听事务提交
             $events->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($transaction) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Commit Transaction', $transaction->connection);
-                }
+                $this->addTransactionQuery('Commit Transaction', $transaction->connection);
             });
 
             // 监听事务回滚
             $events->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($transaction) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
-                }
+                $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
             });
 
             $connectionEvents = [
@@ -204,22 +177,15 @@ class Handle
             ];
             foreach ($connectionEvents as $event => $eventName) {
                 $events->listen('connection.*.'.$event, function ($event, $params) use ($eventName) {
-                    if (self::$currentRequestId === $this->requestId) {
-                        $this->addTransactionQuery($eventName, $params[0]);
-                    }
+                    $this->addTransactionQuery($eventName, $params[0]);
                 });
             }
             // 监听连接创建
             $events->listen(function (\Illuminate\Database\Events\ConnectionEstablished $event) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Connection Established', $event->connection);
-                }
+                $this->addTransactionQuery('Connection Established', $event->connection);
             });
         } catch (Exception $e) {
         }
-
-        // 标记事件监听器已注册
-        self::$eventListenersRegistered = true;
     }
 
     /**
@@ -234,11 +200,13 @@ class Handle
             $bindings = $event->bindings ?? [];
             $sql = $event->sql ?? '';
 
-            // 替换参数占位符
+            // 替换参数占位符 - 使用字符串位置查找避免参数中包含 ? 导致的错误
             foreach ($bindings as $binding) {
-                // 根据数据类型进行转换
-                $bindingValue = $this->convertBindingToString($binding);
-                $sql = preg_replace('/\?/', $bindingValue, $sql, 1);
+                $pos = strpos($sql, '?');
+                if ($pos !== false) {
+                    $bindingValue = $this->convertBindingToString($binding);
+                    $sql = substr_replace($sql, $bindingValue, $pos, 1);
+                }
             }
 
             // 限制SQL长度，避免内存溢出
@@ -338,11 +306,6 @@ class Handle
      */
     protected function logModelEvent($listenString, $model, $event): void
     {
-        // 检查当前请求 ID 是否匹配，防止跨请求事件混入
-        if (self::$currentRequestId !== $this->requestId) {
-            return;
-        }
-
         $model = isset($model[0]) ? $model[0] : $model;
 
         // 使用: 分割 $model , 获取模型名称
@@ -350,12 +313,12 @@ class Handle
 
         $modelId = $model->getKey();
 
-        // 使用请求 ID 作为键，避免不同请求的数据混淆
-        if (! isset(self::$modelList[$this->requestId])) {
-            self::$modelList[$this->requestId] = [];
+        // 使用实例变量存储，避免静态变量导致的内存泄漏
+        if (! isset($this->modelList[$this->requestId])) {
+            $this->modelList[$this->requestId] = [];
         }
 
-        self::$modelList[$this->requestId][] = [
+        $this->modelList[$this->requestId][] = [
             'model' => $modelName,
             'id' => $modelId,
             'event' => $event,
@@ -377,11 +340,6 @@ class Handle
             return '';
         }
 
-        // 检查当前请求 ID 是否匹配
-        if (self::$currentRequestId !== $this->requestId) {
-            return '';
-        }
-
         $this->response = $response;
 
         $exception = [];
@@ -398,19 +356,19 @@ class Handle
         elseif (property_exists($response, 'exception') && ! empty($response->exception)) {
             $exceptionObj = $response->exception;
         }
-        // 最后检查 ExceptionTrait 静态属性（兼容性回退）
-        elseif (self::$initErr && ! empty(self::$message)) {
-            // 从 ExceptionTrait 的静态属性中重建异常信息
+        // 最后检查 ExceptionTrait 实例属性（兼容性回退）
+        elseif ($this->initErr && ! empty($this->message)) {
+            // 从 ExceptionTrait 的实例属性中重建异常信息
             // 注意：这里我们无法获取完整的异常对象，只能获取已处理的信息
-            $fileName = self::$content['file:'] ?? '';
-            $line = self::$content['line:'] ?? 0;
-            $code = self::$content['code:'] ?? 500;
-            $message = self::$message;
+            $fileName = $this->content['file:'] ?? '';
+            $line = $this->content['line:'] ?? 0;
+            $code = $this->content['code:'] ?? 500;
+            $message = $this->message;
 
             $exception = [
                 'message' => $message,
                 'line' => $line,
-                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$this->getExceptionContent(self::$errObj).'</code></pre>',
+                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$this->getExceptionContent($this->errObj).'</code></pre>',
                 'file' => '<span class="json-label"><a href="'.(config('trace.editor') ?? 'phpstorm').'://open?file='.urlencode($fileName).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>',
                 'code' => $code,
             ];
@@ -496,7 +454,7 @@ class Handle
         $data = [];
 
         // 只获取当前请求的模型列表
-        $currentModels = self::$modelList[$this->requestId] ?? [];
+        $currentModels = $this->modelList[$this->requestId] ?? [];
 
         foreach ($currentModels as $model) {
             $key = $model['model'].':'.$model['id'];
@@ -513,7 +471,7 @@ class Handle
         }
 
         // 清理当前请求的数据，避免内存泄漏
-        unset(self::$modelList[$this->requestId]);
+        unset($this->modelList[$this->requestId]);
 
         return $list;
     }

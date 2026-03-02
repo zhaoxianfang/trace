@@ -93,6 +93,12 @@ class RouteServiceProvider extends ServiceProvider
 
         // 安全检查：防止目录遍历攻击
         $realBasePath = realpath($basePath);
+
+        // 如果基础路径不存在，直接返回 404
+        if ($realBasePath === false) {
+            abort(404, "资源文件未找到: {$file}");
+        }
+
         $realPath = realpath($path);
 
         // 如果路径不在允许的范围内，返回 404

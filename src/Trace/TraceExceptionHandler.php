@@ -26,6 +26,9 @@ class TraceExceptionHandler implements ExceptionHandler
 
     protected Handle $trace;
 
+    // 缓存反射属性，避免重复反射操作
+    private static ?\ReflectionProperty $requestIdProperty = null;
+
     // 请求级别的异常处理标记，防止同一异常在单次请求中被多次处理
     protected static array $requestExceptionHashes = [];
 
@@ -139,7 +142,7 @@ class TraceExceptionHandler implements ExceptionHandler
         $this->rendering = true;
         $this->lastException = $e;
 
-        if (! $this->trace::$initErr) {
+        if (! $this->trace->initErr) {
             // 可能部分异常不会走 report，例如：abort(401,'...');
             // 手动重新调用  report报告
             $this->trace->initError($e);
@@ -187,9 +190,9 @@ class TraceExceptionHandler implements ExceptionHandler
         // 判断路径 : 不是get的api 或 json 请求
         try {
             if ($isAjaxRequest) {
-                $response = $this->trace->respJson($this->trace::$message, $this->trace::$code)->send();
+                $response = $this->trace->respJson($this->trace->message, $this->trace->code)->send();
             } else {
-                $response = $this->trace->respView($this->trace::$message, $this->trace::$code)->send();
+                $response = $this->trace->respView($this->trace->message, $this->trace->code)->send();
             }
             $this->rendering = false;
             return $response;
@@ -275,8 +278,8 @@ class TraceExceptionHandler implements ExceptionHandler
             get_class($e).
             $e->getFile().
             $e->getLine().
-            $this->trace::$message.
-            $this->trace::$code
+            $this->trace->message.
+            $this->trace->code
         );
     }
 
@@ -290,11 +293,13 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     protected function getRequestExceptionHash(Throwable $e): string
     {
-        // 通过反射获取 Handle 的 requestId 属性
-        $reflectionClass = new \ReflectionClass($this->trace);
-        $requestIdProperty = $reflectionClass->getProperty('requestId');
-        $requestIdProperty->setAccessible(true);
-        $requestId = $requestIdProperty->getValue($this->trace);
+        // 使用缓存后的反射属性，避免重复反射操作
+        if (self::$requestIdProperty === null) {
+            $reflectionClass = new \ReflectionClass($this->trace);
+            self::$requestIdProperty = $reflectionClass->getProperty('requestId');
+            self::$requestIdProperty->setAccessible(true);
+        }
+        $requestId = self::$requestIdProperty->getValue($this->trace);
 
         return md5(
             get_class($e).
