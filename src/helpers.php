@@ -13,30 +13,34 @@ if (! function_exists('is_enable_trace')) {
     function is_enable_trace(): bool
     {
         try {
+            $app = app();
+
             // 命令行下关闭 trace 调试
-            if (app()->runningInConsole()) {
+            if ($app->runningInConsole()) {
                 return false;
             }
 
             // [最高优先级]如果在 config 文件夹下的 trace.php 文件中配置了 enabled 为 true|false 则使用此配置
-            if (is_bool(config('trace.enabled'))) {
-                return config('trace.enabled');
+            $traceEnabled = config('trace.enabled');
+            if (is_bool($traceEnabled)) {
+                return $traceEnabled;
             }
 
             // 检查 request 是否可用
-            if (! app()->bound('request')) {
+            if (! $app->bound('request')) {
                 return false;
             }
 
             $request = request();
-            if (! $request) {
+            if (! $request instanceof \Illuminate\Http\Request) {
                 return false;
             }
 
-            return (! app()->environment('production') || config('app.debug'))
+            // 非生产环境或开启调试模式，且非 JSON 请求，且非静态文件
+            return (! $app->environment('production') || config('app.debug'))
                 && ! $request->expectsJson()
                 && ! is_static_file($request->fullUrl(), true);
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             // 出现任何异常时返回 false，避免影响主流程
             return false;
         }
@@ -66,17 +70,26 @@ if (! function_exists('is_static_file')) {
     /**
      * 判断是否是资源文件[文件后缀判断]
      *
+     * @param  string  $url  URL 地址
      * @param  bool|array  $simpleOrCustomExt  仅判断简单的几种资源文件
      *                                         true(默认): 仅判断简单的几种资源文件
      *                                         false: 会判断大部分的资源文件
      *                                         array: 仅判断自定义的这些后缀
+     * @return bool
      */
     function is_static_file(string $url, bool|array $simpleOrCustomExt = true): bool
     {
         // 解析 URL
         $path = parse_url($url, PHP_URL_PATH);
+
+        // 检查 path 是否有效
+        if (! is_string($path) || $path === '') {
+            return false;
+        }
+
         // 获取文件扩展名
         $ext = pathinfo($path, PATHINFO_EXTENSION);
+
         // bool: 使用预定义的后缀和特殊规则进行判断
         if (is_bool($simpleOrCustomExt)) {
             // 是否简单判断
@@ -85,22 +98,29 @@ if (! function_exists('is_static_file')) {
                 : [
                     'js', 'css', 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'ico', 'webp', 'ttf', 'woff', 'woff2',
                     'eot', 'otf', 'mp3', 'mp4', 'wav', 'wma', 'wmv', 'avi', 'mpg', 'mpeg', 'rm', 'rmvb', 'flv',
-                    'swf', 'mkv', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip',
+                    'swf', 'mkv', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip',
                     'rar', '7z', 'tar', 'gz', 'bz2', 'tgz', 'tbz', 'tbz2', 'tb2', 't7z', 'jar', 'war', 'ear', 'zipx',
-                    'apk', 'ipa', 'exe', 'dmg', 'pkg', 'deb', 'rpm', 'msi', 'md', 'txt', 'log',
+                    'apk', 'ipa', 'exe', 'dmg', 'pkg', 'deb', 'rpm', 'msi', 'md', 'log',
                 ];
+
             if (! empty($ext)) {
                 // 检查扩展名是否属于资源文件类型
-                return in_array(strtolower($ext), $resourceExtList);
+                return in_array(strtolower($ext), $resourceExtList, true);
             }
 
             // 或者一些特殊路由前缀资源：captcha/: 验证码；tn_code/: 滑动验证码
-            return str_starts_with(trim($path, '/'), 'captcha/') || str_starts_with(trim($path, '/'), 'tn_code/');
+            $trimmedPath = trim($path, '/');
+            return str_starts_with($trimmedPath, 'captcha/') || str_starts_with($trimmedPath, 'tn_code/');
         }
 
         // array: 全部采用自定义传入的扩展名进行判断
-        // 传值不为空?检查扩展名是否属于资源文件类型:false
-        return ! empty($ext) && in_array(strtolower($ext), $simpleOrCustomExt);
+        if (! is_array($simpleOrCustomExt) || empty($ext)) {
+            return false;
+        }
+
+        // 转换所有扩展名为小写进行比较
+        $customExts = array_map('strtolower', $simpleOrCustomExt);
+        return in_array(strtolower($ext), $customExts, true);
     }
 }
 
@@ -224,6 +244,7 @@ if (! function_exists('set_protected_attr')) {
     /**
      * 使用反射 修改对象里面受保护属性的值
      *
+     * 注意：PHP 8.1+ 中 setAccessible() 不再是必需的，从 PHP 8.1 开始默认为 true
      *
      * @throws ReflectionException
      */
@@ -234,7 +255,10 @@ if (! function_exists('set_protected_attr')) {
             $reflectionClass->setStaticPropertyValue($filed, $value);
         } catch (\Exception $err) {
             $reflectionProperty = $reflectionClass->getProperty($filed);
-            $reflectionProperty->setAccessible(true);
+            // PHP 8.1+ 不再需要 setAccessible()，默认为 true
+            if (PHP_VERSION_ID < 80100) {
+                $reflectionProperty->setAccessible(true);
+            }
             $reflectionProperty->setValue($obj, $value);
         }
     }

@@ -19,10 +19,41 @@ use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
  */
 trait TraceResponseTrait
 {
+    // 编辑器配置缓存
+    protected static ?string $editorConfig = null;
+
+    /**
+     * 生成编辑器链接
+     *
+     * @param string $file 文件路径
+     * @param int $line 行号
+     * @param string|null $displayText 显示文本（可选）
+     * @return string HTML链接
+     */
+    protected function generateEditorLink(string $file, int $line, ?string $displayText = null): string
+    {
+        if (self::$editorConfig === null) {
+            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
+        }
+
+        $editor = self::$editorConfig;
+        $fileName = $displayText ?? str_replace(base_path(), '', $file);
+
+        return '<span class="json-label"><a href="'.$this->escapeHtml($editor).'://open?file='.urlencode($file).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>';
+    }
+
     // 返回在页面只渲染调试页面
     public function randerPage($trace): string
     {
-        $html = <<<'EOT'
+        // 使用输出缓冲提高性能
+        ob_start();
+
+        // 获取缓存的编辑器配置
+        if (self::$editorConfig === null) {
+            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
+        }
+
+        ?>
     <div id="trace-tools-box">
     <div class="trace-logo">
       <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAcBJREFUOE/F1MtKAlEYB/DvaI1OlJIuhBYKFbSzi9lKcIJadnkIoQeoTYvw0mu0laBlPYAOQUG2cFGEQdioQXbTUcsy9cQZm+HkXBRcdEAGjt/8zn/OzHcQ9DEwH4qQMhQ8kK5GAxn9iRMhDsw4DBi4Th2K9kI1QTXUvaw+rAI7j4fDvR5NL7ECSqlMOKEJ2WcAxIz2GgiSgBEvb4UE5g8DHGsdizgdE8Huu7B3B4CAZOROAAnHf0rE50pauCnA7N75vLTLMohwJ52VtfEExp51APeadqpfOHuV40vFshTCF0tJlgokkzb/dnF0atOlt49NsdDIHu3mag+303KNIch6t8BsnwTLECNaXIt2+aZW6b7+ep2sm0fGHU9ncfh8EZQ1+wLlaqb9VawIwjCB5LmBwGb1sY4/zCy9Bf8LMp5VYNwrSqCBExKJvBQCkysNiplTIL/uYfhS6GICmpxLb9W7rEMLkr49DMmF/dSy8h3KQD4eiCCk7uNGrZ0uFZpzOr0X9cUulGNNdTiQNoQ2cDSsBdKp6IV0z0M6LQ0SqGXCUX/0MqmV2PCAlfo8Hoh8v7c2yvlm2QiS8Z6gXj/rzf8AmFQQJJO/2LAAAAAASUVORK5CYII=" alt="Logo" style="height: 18px;" class="logo">
@@ -32,99 +63,106 @@ trait TraceResponseTrait
       <div class="tabs-header">
         <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAcBJREFUOE/F1MtKAlEYB/DvaI1OlJIuhBYKFbSzi9lKcIJadnkIoQeoTYvw0mu0laBlPYAOQUG2cFGEQdioQXbTUcsy9cQZm+HkXBRcdEAGjt/8zn/OzHcQ9DEwH4qQMhQ8kK5GAxn9iRMhDsw4DBi4Th2K9kI1QTXUvaw+rAI7j4fDvR5NL7ECSqlMOKEJ2WcAxIz2GgiSgBEvb4UE5g8DHGsdizgdE8Huu7B3B4CAZOROAAnHf0rE50pauCnA7N75vLTLMohwJ52VtfEExp51APeadqpfOHuV40vFshTCF0tJlgokkzb/dnF0atOlt49NsdDIHu3mag+303KNIch6t8BsnwTLECNaXIt2+aZW6b7+ep2sm0fGHU9ncfh8EZQ1+wLlaqb9VawIwjCB5LmBwGb1sY4/zCy9Bf8LMp5VYNwrSqCBExKJvBQCkysNiplTIL/uYfhS6GICmpxLb9W7rEMLkr49DMmF/dSy8h3KQD4eiCCk7uNGrZ0uFZpzOr0X9cUulGNNdTiQNoQ2cDSsBdKp6IV0z0M6LQ0SqGXCUX/0MqmV2PCAlfo8Hoh8v7c2yvlm2QiS8Z6gXj/rzf8AmFQQJJO/2LAAAAAASUVORK5CYII=" alt="Logo" class="tabs-logo-small">
         <div class="tabs-menu">
-EOT;
-
+<?php
         $tabNames = array_keys($trace);
         // tab name
-        foreach ($tabNames as $key => $name) {
+        foreach ($tabNames as $key => $name):
             $tabKey = ($key + 1);
             $activeClass = ($key < 1) ? 'active' : '';
             $isSelected = $key < 1 ? 'true' : 'false';
-            $html .= "<div class='tabs-item {$activeClass}' data-tab='tab{$tabKey}' tabindex='0' role='tab' aria-selected='{$isSelected}'>{$name}</div>";
-        }
-
-        $html .= <<<'EOT'
+?>
+          <div class='tabs-item <?php echo $activeClass; ?>' data-tab='tab<?php echo $tabKey; ?>' tabindex='0' role='tab' aria-selected='<?php echo $isSelected; ?>'><?php echo htmlspecialchars($name, ENT_QUOTES | ENT_HTML5, 'UTF-8'); ?></div>
+<?php endforeach; ?>
         </div>
         <div class="tabs-close" title="关闭调试面板 (ESC)">×</div>
       </div>
-EOT;
+<?php
 
         $tabIndex = 0;
         // tab content
-        foreach ($trace as $key => $tabs) {
-            $tabKey = ($tabIndex + 1);
-            $tabIndex++;
+        foreach ($trace as $key => $tabs):
+            $tabKey = ++$tabIndex;
             $active = ($tabIndex < 2 ? 'active' : '');
-            $html .= <<<EOT
-        <div id="tab{$tabKey}" class="tabs-content {$active}" role="tabpanel" aria-labelledby="tab{$tabKey}">
+?>
+        <div id="tab<?php echo $tabKey; ?>" class="tabs-content <?php echo $active; ?>" role="tabpanel" aria-labelledby="tab<?php echo $tabKey; ?>">
 <ul>
-EOT;
-            foreach ($tabs as $k => $item) {
+<?php
+            foreach ($tabs as $k => $item):
                 // 处理SQL分组
-                if (is_array($item) && isset($item['type']) && $item['type'] == 'sql_group') {
-                    $html .= $this->renderSqlGroup($item);
+                if (is_array($item) && isset($item['type']) && $item['type'] == 'sql_group'):
+                    echo $this->renderSqlGroup($item);
                     continue;
-                }
-
-                $html .= '<li>';
+                endif;
+?>
+          <li>
+<?php
                 try {
-                    if (is_array($item) && ! empty($item['type']) && $item['type'] == 'trace') {
+                    if (is_array($item) && ! empty($item['type']) && $item['type'] == 'trace'):
                         // trace 数据跟踪信息打印
-                        $html .= $this->handleTraceData($item);
-                    }else{
+                        echo $this->handleTraceData($item);
+                    else:
                         // 左侧label
-                        if(is_array($item) && ! empty($item['label'])){
-                            $html .= "<span class='json-label'>{$item['label']}</span>";
-                        }elseif (is_string($k)){
-                            $html .= "<span class='json-label'>{$k}</span>";
-                        }
+                        if(is_array($item) && ! empty($item['label'])):
+?>
+            <span class='json-label'><?php echo $this->escapeHtml($item['label']); ?></span>
+<?php
+                        elseif (is_string($k)):
+?>
+            <span class='json-label'><?php echo $this->escapeHtml($k); ?></span>
+<?php
+                        endif;
 
                         // 中间 对象/数组/字符串
-                        if (!is_array($item)) {
+                        if (!is_array($item)):
                             $class = is_numeric($k) ? 'json-label' : 'json-string-content';
                             // 是标量 或者空
-                            if (is_scalar($item) || is_null($item)) {
-                                $html .= "<div class='{$class}'>".format_param($item).'</div>';
-                            } else {
-                                $html .= "<div class='{$class}'>".(ucfirst(gettype($item)).':'.get_class($item)).'</div>';
-                            }
-                        }else{
-                            if(!empty(array_diff(array_keys($item), ['label', 'right']))){
-                                // $arrayString = json_encode($item, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                            if (is_scalar($item) || is_null($item)):
+?>
+            <div class='<?php echo $class; ?>'><?php echo format_param($item); ?></div>
+<?php
+                            else:
+?>
+            <div class='<?php echo $class; ?>'><?php echo ucfirst(gettype($item)).':'.get_class($item); ?></div>
+<?php
+                            endif;
+                        else:
+                            if(!empty(array_diff(array_keys($item), ['label', 'right']))):
                                 $arrayString = json_encode($item, JSON_UNESCAPED_UNICODE);
-                                $html .= <<<EOT
+?>
     <div class="json-arrow-pre-wrapper">
       <span class="json-arrow" onclick="toggleJson(this)" role="button" tabindex="0" aria-expanded="false">▶</span>
-      <pre class="json">{$arrayString}</pre>
+      <pre class="json"><?php echo $arrayString; ?></pre>
     </div>
-EOT;
-                            }elseif (empty($item)){
-                                $html .= "<span class='json-string-content'>[]</span>";
-                            }
-                        }
+<?php
+                            elseif (empty($item)):
+?>
+            <span class='json-string-content'>[]</span>
+<?php
+                            endif;
+                        endif;
 
                         // 右侧right
-                        if (is_array($item) && ! empty($item['right'])) {
-                            $html .= "<span class='json-right'>".$item['right'].'</span>';
-                        }
-                    }
+                        if (is_array($item) && ! empty($item['right'])):
+?>
+            <span class='json-right'><?php echo $this->escapeHtml((string)$item['right']); ?></span>
+<?php
+                        endif;
+                    endif;
                 } catch (Exception $e) {
-                    $html .= "<div class='json-string-content' style='color: #ef4444;'>⚠️ 数据解析错误</div>";
+?>
+            <div class='json-string-content' style='color: #ef4444;'>⚠️ 数据解析错误</div>
+<?php
                 }
-                $html .= '</li>';
-            }
-
-            $html .= <<<'EOT'
+?>
+          </li>
+<?php endforeach; ?>
         </ul>
        </div>
-EOT;
-        }
-
-        $html .= <<<'EOT'
+<?php endforeach; ?>
       </div></div>
-EOT;
-
-        return $html;
+<?php
+        // 获取输出缓冲内容并清理
+        return ob_get_clean();
     }
 
     /**
@@ -135,10 +173,10 @@ EOT;
      */
     protected function renderSqlGroup(array $group): string
     {
-        $groupName = htmlspecialchars($group['name'], ENT_QUOTES, 'UTF-8');
-        $groupClass = htmlspecialchars($group['class'], ENT_QUOTES, 'UTF-8');
-        $sqlCount = (int) $group['count'];
-        $collapsed = $group['collapsed'] ?? false ? 'collapsed' : '';
+        $groupName = $this->escapeHtml($group['name'] ?? '');
+        $groupClass = $this->escapeHtml($group['class'] ?? 'sql-group');
+        $sqlCount = (int) ($group['count'] ?? 0);
+        $collapsed = ($group['collapsed'] ?? false) ? 'collapsed' : '';
 
         $html = <<<EOT
 <div class="sql-group {$groupClass} {$collapsed}">
@@ -152,9 +190,10 @@ EOT;
   <ul class="sql-group-content">
 EOT;
 
-        foreach ($group['sqls'] as $sqlItem) {
-            $sql = htmlspecialchars($sqlItem['label'] ?? '', ENT_QUOTES, 'UTF-8');
-            $time = htmlspecialchars($sqlItem['right'] ?? '-', ENT_QUOTES, 'UTF-8');
+        $sqls = is_array($group['sqls'] ?? null) ? $group['sqls'] : [];
+        foreach ($sqls as $sqlItem) {
+            $sql = $this->escapeHtml($sqlItem['label'] ?? '');
+            $time = $this->escapeHtml($sqlItem['right'] ?? '-');
 
             $html .= <<<EOT
     <li>
@@ -172,13 +211,33 @@ EOT;
         return $html;
     }
 
+    /**
+     * HTML 实体编码
+     *
+     * @param string $text
+     * @return string
+     */
+    protected function escapeHtml(string $text): string
+    {
+        return htmlspecialchars($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
     protected function handleTraceData($data = []): string
     {
-        $editor = config('trace.editor') ?? 'phpstorm';
-        $str = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($data['file_path']).'&amp;line='.$data['line'].'" class="phpdebugbar-link">'.$data['local'].'</a></span>';
+        // 使用缓存的编辑器配置
+        if (self::$editorConfig === null) {
+            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
+        }
+        $editor = self::$editorConfig;
+        $filePath = $this->escapeHtml($data['file_path'] ?? '');
+        $line = (int) ($data['line'] ?? 1);
+        $local = $this->escapeHtml($data['local'] ?? '');
+        $var = $data['var'] ?? null;
 
-        if (is_array($data['var']) && ! empty($data['var'])) {
-            $arrayString = json_encode($data['var'], JSON_UNESCAPED_UNICODE);
+        $str = '<span class="json-label"><a href="'.$this->escapeHtml($editor).'://open?file='.urlencode($filePath).'&amp;line='.$line.'" class="phpdebugbar-link">'.$local.'</a></span>';
+
+        if (is_array($var) && ! empty($var)) {
+            $arrayString = $this->escapeHtml(json_encode($var, JSON_UNESCAPED_UNICODE));
             $str .= <<<EOT
                     <div class="json-arrow-pre-wrapper">
                       <span class="json-arrow" onclick="toggleJson(this)">▶</span>
@@ -186,14 +245,14 @@ EOT;
                     </div>
 EOT;
         } else {
-            if(is_array($data['var'])){
+            if (is_array($var)) {
                 $str .= "<div class='json-string-content'>[]</div>";
-            }else{
+            } else {
                 // 是标量 或者空
-                if (is_scalar($data['var']) || is_null($data['var'])) {
-                    $str .= "<div class='json-string-content'>".format_param($data['var']).'</div>';
+                if (is_scalar($var) || is_null($var)) {
+                    $str .= "<div class='json-string-content'>".$this->escapeHtml(format_param($var)).'</div>';
                 } else {
-                    $str .= "<div class='json-string-content'>".($data['var']).'</div>';
+                    $str .= "<div class='json-string-content'>".$this->escapeHtml((string) $var).'</div>';
                 }
             }
         }

@@ -1,5 +1,5 @@
 // ========================================
-// Trace 调试工具 JavaScript
+// Trace 调试工具 JavaScript - 性能优化版
 // ========================================
 
 // 防止重复初始化
@@ -10,13 +10,18 @@ if (window.__traceInitialized) {
 
     // 全局配置
     const CONFIG = {
-        clickDebounceTime: 500, // 点击防抖时间(ms)
+        clickDebounceTime: 300, // 点击防抖时间(ms) - 减少等待时间
         textMaxLength: 100,    // 文本最大长度
-        maxRetries: 3,          // 最大重试次数
+        maxRetries: 2,          // 最大重试次数 - 减少重试次数
+        domCacheTimeout: 5000,  // DOM缓存有效期(ms)
     };
 
     // 全局状态
     let isClickAllowed = true;
+
+    // DOM 元素缓存
+    const domCache = new Map();
+    let domCacheTimestamp = 0;
 
     /**
      * 重置点击允许状态
@@ -29,15 +34,76 @@ if (window.__traceInitialized) {
     }
 
     /**
+     * 获取缓存的 DOM 元素
+     */
+    function getCachedElement(selector) {
+        const now = Date.now();
+        // 检查缓存是否过期
+        if (now - domCacheTimestamp > CONFIG.domCacheTimeout) {
+            domCache.clear();
+            domCacheTimestamp = now;
+        }
+
+        if (domCache.has(selector)) {
+            const cached = domCache.get(selector);
+            // 验证缓存的元素是否仍在 DOM 中
+            if (cached && document.contains(cached)) {
+                return cached;
+            }
+            // 元素已不在 DOM 中，移除缓存
+            domCache.delete(selector);
+        }
+
+        const element = document.querySelector(selector);
+        if (element) {
+            domCache.set(selector, element);
+            domCacheTimestamp = now;
+        }
+        return element;
+    }
+
+    /**
+     * 获取缓存的 DOM 元素列表
+     */
+    function getCachedElements(selector) {
+        const cacheKey = `all:${selector}`;
+        const now = Date.now();
+
+        if (now - domCacheTimestamp > CONFIG.domCacheTimeout) {
+            domCache.clear();
+            domCacheTimestamp = now;
+        }
+
+        if (domCache.has(cacheKey)) {
+            return domCache.get(cacheKey);
+        }
+
+        const elements = document.querySelectorAll(selector);
+        const elementArray = Array.from(elements);
+        domCache.set(cacheKey, elementArray);
+        domCacheTimestamp = now;
+        return elementArray;
+    }
+
+    /**
      * 安全的 DOM 查询，带重试机制
      */
     function safeQuerySelector(selector, retries = CONFIG.maxRetries) {
+        // 先尝试从缓存获取
+        const cached = getCachedElement(selector);
+        if (cached) return cached;
+
+        // 缓存未命中，尝试重试
         for (let i = 0; i < retries; i++) {
             const element = document.querySelector(selector);
-            if (element) return element;
+            if (element) {
+                domCache.set(selector, element);
+                domCacheTimestamp = Date.now();
+                return element;
+            }
             // 等待 DOM 更新
             if (i < retries - 1) {
-                new Promise(resolve => setTimeout(resolve, 10 * (i + 1)));
+                new Promise(resolve => setTimeout(resolve, 5 * (i + 1)));
             }
         }
         return null;
@@ -48,7 +114,7 @@ if (window.__traceInitialized) {
      */
     function safeQuerySelectorAll(selector) {
         try {
-            return document.querySelectorAll(selector);
+            return getCachedElements(selector);
         } catch (e) {
             // console.error('[Trace] Error querying selector:', selector, e);
             return [];
@@ -162,6 +228,35 @@ if (window.__traceInitialized) {
         });
     }
 
+    // JSON 解析缓存
+    const jsonParseCache = new Map();
+    const MAX_JSON_CACHE_SIZE = 50;
+
+    /**
+     * 缓存 JSON 解析结果
+     */
+    function getCachedJsonParse(jsonText) {
+        if (jsonParseCache.has(jsonText)) {
+            return jsonParseCache.get(jsonText);
+        }
+
+        // 清理缓存防止内存泄漏
+        if (jsonParseCache.size >= MAX_JSON_CACHE_SIZE) {
+            const firstKey = jsonParseCache.keys().next().value;
+            jsonParseCache.delete(firstKey);
+        }
+
+        let jsonData;
+        try {
+            jsonData = JSON.parse(jsonText);
+        } catch (parseError) {
+            jsonData = { error: 'Invalid JSON' };
+        }
+
+        jsonParseCache.set(jsonText, jsonData);
+        return jsonData;
+    }
+
     /**
      * 初始化 JSON 显示
      */
@@ -169,20 +264,14 @@ if (window.__traceInitialized) {
         try {
             // 从 data-original 属性获取已处理的 JSON 文本
             let jsonText = jsonElement.getAttribute("data-original");
-            
+
             if (!jsonText) {
                 // console.warn('[Trace] No original JSON data found');
                 return;
             }
 
-            // 解析 JSON
-            let jsonData;
-            try {
-                jsonData = JSON.parse(jsonText);
-            } catch (parseError) {
-                // console.warn('[Trace] Failed to parse JSON:', parseError);
-                jsonData = { error: 'Invalid JSON' };
-            }
+            // 使用缓存的 JSON 解析结果
+            const jsonData = getCachedJsonParse(jsonText);
 
             // 计算 JSON 对象的长度
             const arrayLength = Array.isArray(jsonData) ? jsonData.length : Object.keys(jsonData).length;
@@ -399,7 +488,6 @@ if (window.__traceInitialized) {
 
         try {
             const preElement = arrowElement.nextElementSibling;
-            const _labelElement = arrowElement.parentNode ? arrowElement.parentNode.previousElementSibling : null;
 
             if (!preElement || !preElement.getAttribute) {
                 // console.error('[Trace] toggleJson: preElement not found or invalid');
@@ -412,14 +500,8 @@ if (window.__traceInitialized) {
                 return;
             }
 
-            let jsonData;
-            try {
-                jsonData = JSON.parse(originalJson);
-            } catch (parseError) {
-                // console.error('[Trace] toggleJson: failed to parse JSON:', parseError);
-                return;
-            }
-
+            // 使用缓存的 JSON 解析结果
+            const jsonData = getCachedJsonParse(originalJson);
             const arrayLength = Array.isArray(jsonData) ? jsonData.length : Object.keys(jsonData).length;
             const prefix = Array.isArray(jsonData) ? 'array' : 'object';
 
@@ -427,12 +509,10 @@ if (window.__traceInitialized) {
                 // 收起
                 arrowElement.textContent = `▶ ${prefix}:${arrayLength}`;
                 preElement.classList.remove("show");
-                // console.log('[Trace] JSON collapsed');
             } else {
                 // 展开
                 arrowElement.textContent = `▼ ${prefix}:${arrayLength}`;
                 preElement.classList.add("show");
-                // console.log('[Trace] JSON expanded');
             }
         } catch (e) {
             // console.error('[Trace] Error in toggleJson:', e);

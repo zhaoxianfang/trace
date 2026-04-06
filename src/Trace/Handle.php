@@ -98,6 +98,18 @@ class Handle
     // 反射缓存 - 优化性能
     protected static array $reflectionCache = [];
 
+    // 反射缓存最大条目数
+    protected static int $maxReflectionCacheSize = 100;
+
+    // SQL 列表最大条目数
+    protected int $maxSqlListSize = 500;
+
+    // 单条 SQL 最大长度
+    protected int $maxSqlLength = 1500;
+
+    // 最大绑定参数数量
+    protected int $maxBindings = 50;
+
     /** @var Request */
     protected $request;
 
@@ -112,6 +124,15 @@ class Handle
 
     // 请求计数器，用于追踪请求次数
     protected static int $requestCounter = 0;
+
+    // 配置缓存，避免重复读取
+    protected static array $configCache = [];
+
+    // SQL 分组模式缓存
+    protected static ?array $sqlGroupPatterns = null;
+
+    // 是否启用 SQL 分组缓存
+    protected static ?bool $sqlGroupingEnabled = null;
 
     /**
      * 实例化并初始化请求级别状态
@@ -130,22 +151,113 @@ class Handle
         self::$currentRequestId = $this->requestId;
         self::$requestCounter++;
 
-        if (is_enable_trace()) {
-            $this->startMemory = memory_get_usage();
+        // 从配置读取限制值（使用静态属性避免重复读取）
+        $this->loadConfigLimits();
 
-            if (! $app) {
-                $app = app();   // Fallback when $app is not given
-            }
-            $this->app = $app;
-            $this->router = $this->app['router'];
-            $this->startTime = $this->app['request']->server('REQUEST_TIME_FLOAT') ?? constant('LARAVEL_START');
-
-            $this->request = $app['request'];
-            $this->config = array_merge($this->config, $config);
-
-            $this->listenModelEvent();
-            $this->listenSql();
+        if (! is_enable_trace()) {
+            return;
         }
+
+        $this->startMemory = memory_get_usage();
+
+        if (! $app) {
+            $app = app();
+        }
+        $this->app = $app;
+        $this->router = $this->app['router'];
+
+        // 安全获取开始时间
+        $this->startTime = $this->getStartTime();
+
+        $this->request = $app['request'];
+        $this->config = array_merge($this->config, $config);
+
+        $this->listenModelEvent();
+        $this->listenSql();
+    }
+
+    /**
+     * 加载配置中的限制值
+     *
+     * @return void
+     */
+    protected function loadConfigLimits(): void
+    {
+        if (! isset(self::$configCache['limits'])) {
+            self::$configCache['limits'] = config('trace.limits', []);
+        }
+
+        $limits = self::$configCache['limits'];
+        $this->maxSqlListSize = $limits['max_sql_count'] ?? 500;
+        $this->maxSqlLength = $limits['max_sql_length'] ?? 1500;
+        $this->maxBindings = $limits['max_bindings'] ?? 50;
+        self::$maxReflectionCacheSize = $limits['max_reflection_cache'] ?? 100;
+    }
+
+    /**
+     * 获取缓存的配置值
+     *
+     * @param string $key 配置键名
+     * @param mixed $default 默认值
+     * @return mixed
+     */
+    protected static function getCachedConfig(string $key, mixed $default = null): mixed
+    {
+        if (! array_key_exists($key, self::$configCache)) {
+            self::$configCache[$key] = config($key, $default);
+        }
+        return self::$configCache[$key];
+    }
+
+    /**
+     * 清除配置缓存（用于配置变更时）
+     *
+     * @return void
+     */
+    public static function clearConfigCache(): void
+    {
+        self::$configCache = [];
+        self::$sqlGroupPatterns = null;
+        self::$sqlGroupingEnabled = null;
+    }
+
+    /**
+     * 获取当前请求ID
+     *
+     * @return string|null
+     */
+    public function getRequestId(): ?string
+    {
+        return $this->requestId;
+    }
+
+    /**
+     * 获取请求开始时间
+     *
+     * @return float
+     */
+    protected function getStartTime(): float
+    {
+        // 尝试从服务器变量获取
+        if (isset($_SERVER['REQUEST_TIME_FLOAT'])) {
+            return $_SERVER['REQUEST_TIME_FLOAT'];
+        }
+
+        // 尝试从应用容器获取
+        if (isset($this->app['request'])) {
+            $time = $this->app['request']->server('REQUEST_TIME_FLOAT');
+            if ($time !== null) {
+                return (float) $time;
+            }
+        }
+
+        // 回退到 LARAVEL_START 常量
+        if (defined('LARAVEL_START')) {
+            return LARAVEL_START;
+        }
+
+        // 最后回退到当前时间
+        return microtime(true);
     }
 
     /**
@@ -186,7 +298,7 @@ class Handle
             return;
         }
 
-        $events = isset($this->app['events']) ? $this->app['events'] : null;
+        $events = $this->app['events'] ?? null;
         if (! $events) {
             return;
         }
@@ -206,44 +318,8 @@ class Handle
         }
 
         try {
-            // 监听事务开始
-            $events->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($transaction) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Begin Transaction', $transaction->connection);
-                }
-            });
-            // 监听事务提交
-            $events->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($transaction) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Commit Transaction', $transaction->connection);
-                }
-            });
-
-            // 监听事务回滚
-            $events->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($transaction) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
-                }
-            });
-
-            $connectionEvents = [
-                'beganTransaction' => 'Begin Transaction', // 开始事务
-                'committed' => 'Commit Transaction', // 提交事务
-                'rollingBack' => 'Rollback Transaction', // 回滚事务
-            ];
-            foreach ($connectionEvents as $event => $eventName) {
-                $events->listen('connection.*.'.$event, function ($event, $params) use ($eventName) {
-                    if (self::$currentRequestId === $this->requestId) {
-                        $this->addTransactionQuery($eventName, $params[0]);
-                    }
-                });
-            }
-            // 监听连接创建
-            $events->listen(function (\Illuminate\Database\Events\ConnectionEstablished $event) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery('Connection Established', $event->connection);
-                }
-            });
+            // 监听事务相关事件
+            $this->registerTransactionListeners($events);
         } catch (Exception $e) {
             if (config('app.debug', false)) {
                 error_log('[Trace] 事务监听错误: ' . $e->getMessage());
@@ -255,6 +331,58 @@ class Handle
     }
 
     /**
+     * 注册事务相关事件监听器
+     *
+     * @param mixed $events 事件调度器
+     * @return void
+     */
+    protected function registerTransactionListeners($events): void
+    {
+        // 监听事务开始
+        $events->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($transaction) {
+            if (self::$currentRequestId === $this->requestId) {
+                $this->addTransactionQuery('Begin Transaction', $transaction->connection);
+            }
+        });
+
+        // 监听事务提交
+        $events->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($transaction) {
+            if (self::$currentRequestId === $this->requestId) {
+                $this->addTransactionQuery('Commit Transaction', $transaction->connection);
+            }
+        });
+
+        // 监听事务回滚
+        $events->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($transaction) {
+            if (self::$currentRequestId === $this->requestId) {
+                $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
+            }
+        });
+
+        // 连接事件映射
+        $connectionEvents = [
+            'beganTransaction' => 'Begin Transaction',
+            'committed' => 'Commit Transaction',
+            'rollingBack' => 'Rollback Transaction',
+        ];
+
+        foreach ($connectionEvents as $event => $eventName) {
+            $events->listen('connection.*.'.$event, function ($event, $params) use ($eventName) {
+                if (self::$currentRequestId === $this->requestId) {
+                    $this->addTransactionQuery($eventName, $params[0] ?? null);
+                }
+            });
+        }
+
+        // 监听连接创建
+        $events->listen(\Illuminate\Database\Events\ConnectionEstablished::class, function ($event) {
+            if (self::$currentRequestId === $this->requestId) {
+                $this->addTransactionQuery('Connection Established', $event->connection);
+            }
+        });
+    }
+
+    /**
      * 记录sql
      *
      * @param  QueryExecuted  $event
@@ -262,23 +390,38 @@ class Handle
     private function addQuery(QueryExecuted $event): void
     {
         try {
+            // 检查 SQL 列表大小限制
+            if (count($this->sqlList) >= $this->maxSqlListSize) {
+                // 如果超过限制，移除最早的条目
+                array_shift($this->sqlList);
+            }
+
             // 获取绑定的参数
             $bindings = $event->bindings ?? [];
             $sql = $event->sql ?? '';
+
+            // 安全检查：确保 SQL 不为空
+            if (empty($sql)) {
+                return;
+            }
+
+            // 限制最大绑定参数数量，防止性能问题
+            if (count($bindings) > $this->maxBindings) {
+                $bindings = array_slice($bindings, 0, $this->maxBindings);
+            }
 
             // 替换参数占位符 - 使用性能更好的方法
             $sql = $this->replaceBindings($sql, $bindings);
 
             // 限制SQL长度，避免内存溢出
-            if (strlen($sql) > 5000) {
-                $sql = substr($sql, 0, 5000) . '... [TRUNCATED]';
+            if (strlen($sql) > $this->maxSqlLength) {
+                $sql = substr($sql, 0, $this->maxSqlLength) . '... [TRUNCATED]';
             }
 
             $this->sqlList[] = [
                 'sql' => $sql,
                 'type' => 'Query',
                 'time' => $event->time ?? 0, // 'ms'
-                // 'connection' => $event->connectionName, // eg: mysql
             ];
         } catch (\Throwable $e) {
             if (config('app.debug', false)) {
@@ -291,20 +434,42 @@ class Handle
      * 替换 SQL 中的参数占位符
      * 使用 strpos + substr_replace 代替 preg_replace，提升性能
      *
+     * 安全说明：
+     * 1. 本方法仅用于调试展示，不执行实际查询
+     * 2. 使用 PDO quote 进行参数转义
+     * 3. 限制字符串长度防止内存溢出
+     *
      * @param  string  $sql SQL 语句
      * @param  array  $bindings 绑定的参数
      * @return string 替换后的 SQL
      */
     private function replaceBindings(string $sql, array $bindings): string
     {
-        foreach ($bindings as $binding) {
-            $pos = strpos($sql, '?');
-            if ($pos !== false) {
-                $bindingValue = $this->convertBindingToString($binding);
-                $sql = substr_replace($sql, $bindingValue, $pos, 1);
-            }
+        // 限制最大绑定参数数量，防止性能问题（使用配置值或默认1000）
+        $maxBindings = 1000;
+        $bindingCount = count($bindings);
+        
+        if ($bindingCount > $maxBindings) {
+            $bindings = array_slice($bindings, 0, $maxBindings);
+            $bindingCount = $maxBindings;
         }
-        return $sql;
+
+        // 性能优化：预分配字符串缓冲区，减少内存重新分配
+        $offset = 0;
+        $result = $sql;
+        
+        for ($i = 0; $i < $bindingCount; $i++) {
+            $pos = strpos($result, '?', $offset);
+            if ($pos === false) {
+                break;
+            }
+            $bindingValue = $this->convertBindingToString($bindings[$i]);
+            $result = substr_replace($result, $bindingValue, $pos, 1);
+            // 更新偏移量，避免重复查找已替换的部分
+            $offset = $pos + strlen($bindingValue);
+        }
+        
+        return $result;
     }
 
     /**
@@ -589,8 +754,8 @@ class Handle
 
     private function getBaseInfo($sqlTimes = 0): array
     {
-        // 获取基本信息
-        $runtime = bcsub(microtime(true), $this->startTime, 3);
+        // 获取基本信息 - 使用普通运算符提高性能
+        $runtime = round(microtime(true) - $this->startTime, 3);
         $reqs = $runtime > 0 ? number_format(1 / $runtime, 2) : '∞';
         $base = [
             '请求信息' => $this->request->method().' '.$this->request->fullUrl(),
@@ -644,8 +809,8 @@ class Handle
                 $freeSpace = disk_free_space($directoryPath);
 
                 if ($totalSpace && $freeSpace) {
-                    $useSpace = bcsub($totalSpace, $freeSpace, 0);
-                    $usageRate = bcmul(bcdiv($useSpace, $totalSpace, 5), 100, 2).'%';
+                    $useSpace = $totalSpace - $freeSpace;
+                    $usageRate = round(($useSpace / $totalSpace) * 100, 2).'%';
                     $base['Disk Space'] = 'total:'.size_format($totalSpace).'; used:'.size_format($useSpace).'; free:'.size_format($freeSpace).'; usage:'.$usageRate;
                 }
             } catch (Exception $e) {
@@ -671,7 +836,11 @@ class Handle
 
         // 验证是否为有效的IPv4地址
         if (! filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return $ip; // 如果不是有效的IPv4，直接返回原值
+            // 尝试 IPv6 脱敏
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                return $this->maskIPv6($ip);
+            }
+            return $ip;
         }
 
         // 将 IP 地址分割成数组
@@ -679,11 +848,38 @@ class Handle
 
         // 检查是否是标准的IPv4地址（4个部分）
         if (count($parts) !== 4) {
-            return $ip; // 如果不是4个部分，直接返回原值
+            return $ip;
+        }
+
+        // 验证每个部分是否为有效的数字
+        foreach ($parts as $part) {
+            if (! is_numeric($part) || (int) $part < 0 || (int) $part > 255) {
+                return $ip;
+            }
         }
 
         // 只保留第一个和最后一个部分，中间用 ***.*** 替换
         return $parts[0].'.***.***.'.$parts[3];
+    }
+
+    /**
+     * IPv6 地址脱敏
+     *
+     * @param string $ip
+     * @return string
+     */
+    private function maskIPv6(string $ip): string
+    {
+        // 简化的 IPv6 脱敏：只显示前2组和后2组
+        $parts = explode(':', $ip);
+        if (count($parts) < 4) {
+            return '****:****:****:****';
+        }
+
+        $first = array_slice($parts, 0, 2);
+        $last = array_slice($parts, -2, 2);
+
+        return implode(':', $first) . ':****:****:' . implode(':', $last);
     }
 
     /**
@@ -716,24 +912,21 @@ class Handle
                 [$controller, $method] = explode('@', $controller);
                 $reflector = $this->getCachedReflectionMethod($controller, $method);
                 if ($reflector) {
-                    $fileName = $this->getFilePath($reflector->getFileName());
-                    $editor = config('trace.editor') ?? 'phpstorm';
-                    $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
+                    $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
+                    $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
                 }
                 unset($result['uses']);
             } elseif ($uses instanceof Closure) {
                 $reflector = new ReflectionFunction($uses);
-                $fileName = $this->getFilePath($reflector->getFileName());
-                $editor = config('trace.editor') ?? 'phpstorm';
-                $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
+                $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
+                $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
                 $result['uses'] = $uses;
             } elseif (is_string($uses) && str_contains($uses, '@__invoke')) {
                 if (class_exists($controller) && method_exists($controller, 'render')) {
                     $reflector = $this->getCachedReflectionMethod($controller, 'render');
                     if ($reflector) {
-                        $fileName = $this->getFilePath($reflector->getFileName());
-                        $editor = config('trace.editor') ?? 'phpstorm';
-                        $result['file'] = '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($reflector->getFileName()).'&amp;line='.$reflector->getStartLine().'" class="phpdebugbar-link">'.($fileName.'#'.$reflector->getStartLine().'-'.$reflector->getEndLine()).'</a></span>';
+                        $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
+                        $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
                         $result['controller'] = $controller.'@render';
                     }
                 }
@@ -783,7 +976,10 @@ class Handle
                 self::$reflectionCache[$key] = class_exists($class) && method_exists($class, $method)
                     ? new ReflectionMethod($class, $method)
                     : null;
-            } catch (\Throwable $e) {
+
+                // 清理反射缓存，防止内存泄漏
+                $this->cleanupReflectionCache();
+            } catch (\Throwable) {
                 self::$reflectionCache[$key] = null;
             }
         }
@@ -791,50 +987,67 @@ class Handle
         return self::$reflectionCache[$key];
     }
 
+    /**
+     * 清理反射缓存，防止内存溢出
+     *
+     * @return void
+     */
+    private function cleanupReflectionCache(): void
+    {
+        if (count(self::$reflectionCache) > self::$maxReflectionCacheSize) {
+            // 保留最近的一半缓存
+            $halfSize = (int) (self::$maxReflectionCacheSize / 2);
+            self::$reflectionCache = array_slice(self::$reflectionCache, -$halfSize, null, true);
+        }
+    }
+
     private function getSqlInfo(): array
     {
         $sqlTimes = 0;
         $sqlList = [];
 
-        // 从配置获取SQL分组规则
-        $groupConfig = config('trace.sql_groups', ['enabled' => true, 'groups' => []]);
+        // 获取缓存的SQL分组配置
+        if (self::$sqlGroupPatterns === null) {
+            $groupConfig = self::getCachedConfig('trace.sql_groups', ['enabled' => true, 'groups' => []]);
 
-        // 定义默认SQL分组规则
-        $defaultGroupPatterns = [
-            'cache' => [
-                'name' => '缓存查询',
-                'class' => 'sql-group-cache',
-                'patterns' => [
-                    '/select\s+.*\s+from\s+`?cache`?/i',
-                    '/select\s+.*\s+from\s+`?cache_[\w]+`?/i',
-                    '/insert\s+into\s+`?cache`?/i',
-                    '/update\s+`?cache`?\s+set/i',
-                    '/delete\s+from\s+`?cache`?/i',
-                    '/select.*cache_key/i',
-                    '/select.*cache_value/i',
+            // 定义默认SQL分组规则
+            $defaultGroupPatterns = [
+                'cache' => [
+                    'name' => '缓存查询',
+                    'class' => 'sql-group-cache',
+                    'patterns' => [
+                        '/select\s+.*\s+from\s+`?cache`?/i',
+                        '/select\s+.*\s+from\s+`?cache_[\w]+`?/i',
+                        '/insert\s+into\s+`?cache`?/i',
+                        '/update\s+`?cache`?\s+set/i',
+                        '/delete\s+from\s+`?cache`?/i',
+                        '/select.*cache_key/i',
+                        '/select.*cache_value/i',
+                    ]
+                ],
+                'session' => [
+                    'name' => '会话查询',
+                    'class' => 'sql-group-session',
+                    'patterns' => [
+                        '/select\s+.*\s+from\s+`?sessions`?/i',
+                        '/insert\s+into\s+`?sessions`?/i',
+                        '/update\s+`?sessions`?\s+set/i',
+                        '/delete\s+from\s+`?sessions`?/i',
+                        '/select.*session_id/i',
+                        '/select.*user_id/i',
+                        '/select.*payload/i',
+                    ]
                 ]
-            ],
-            'session' => [
-                'name' => '会话查询',
-                'class' => 'sql-group-session',
-                'patterns' => [
-                    '/select\s+.*\s+from\s+`?sessions`?/i',
-                    '/insert\s+into\s+`?sessions`?/i',
-                    '/update\s+`?sessions`?\s+set/i',
-                    '/delete\s+from\s+`?sessions`?/i',
-                    '/select.*session_id/i',
-                    '/select.*user_id/i',
-                    '/select.*payload/i',
-                ]
-            ]
-        ];
+            ];
 
-        // 合并配置和默认规则
-        $groupPatterns = array_merge($defaultGroupPatterns, $groupConfig['groups']);
+            // 合并配置和默认规则
+            self::$sqlGroupPatterns = array_merge($defaultGroupPatterns, $groupConfig['groups'] ?? []);
+            self::$sqlGroupingEnabled = $groupConfig['enabled'] ?? true;
+        }
 
-        // 检查是否启用分组
-        $groupEnabled = $groupConfig['enabled'] ?? true;
-        $collapsedByDefault = $groupConfig['collapsed_by_default'] ?? false;
+        $groupPatterns = self::$sqlGroupPatterns;
+        $groupEnabled = self::$sqlGroupingEnabled;
+        $collapsedByDefault = self::$configCache['trace.sql_groups']['collapsed_by_default'] ?? false;
 
         // 分类SQL语句
         $groupedSql = array_fill_keys(array_keys($groupPatterns), []);
@@ -849,7 +1062,7 @@ class Handle
                 continue;
             }
 
-            $sqlTimes = bcadd($sqlTimes, $item['time'], 3);
+            $sqlTimes += $item['time'];
             $sqlItem = [
                 'label' => $item['sql'],
                 'right' => !empty($item['time']) ? $item['time'].'ms' : '-',
@@ -916,7 +1129,7 @@ class Handle
         }
 
         // 毫秒转秒
-        $sqlTimes = $sqlTimes > 0 ? bcdiv($sqlTimes, 1000, 3) : 0;
+        $sqlTimes = $sqlTimes > 0 ? round($sqlTimes / 1000, 3) : 0;
 
         return [$sqlList, $sqlTimes];
     }

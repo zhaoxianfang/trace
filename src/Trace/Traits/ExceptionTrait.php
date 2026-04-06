@@ -5,7 +5,6 @@ namespace zxf\Trace\Traits;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\App;
-use Illuminate\Support\Facades\Log;
 use ParseError;
 use Throwable;
 
@@ -14,7 +13,8 @@ use Throwable;
  */
 trait ExceptionTrait
 {
-    use ExceptionCodeTrait,ExceptionNotifyTrait;
+    use ExceptionCodeTrait;
+    use ExceptionNotifyTrait;
 
     // 可使外部调用的处理好的错误码
     public static int $code = 500;
@@ -33,7 +33,9 @@ trait ExceptionTrait
 
     // 错误信息
     public static array $content = [];
-    public static Throwable $errObj;
+
+    // 异常对象（可能未初始化）
+    public static ?Throwable $errObj = null;
 
     public function initError(Throwable $e): void
     {
@@ -268,13 +270,20 @@ trait ExceptionTrait
      */
     private function getExceptionContent(Throwable $e): false|string
     {
-        $startLine = $e->getLine() - 4;
-        $endLine = $e->getLine() + 4;
+        $errLine = $e->getLine();
+        $startLine = max(1, $errLine - 4);
+        $endLine = $errLine + 4;
         $filePath = $e->getFile();
 
         // 检查行号是否合理
-        if (! is_int($startLine) || ! is_int($endLine) || $startLine <= 0 || $endLine < $startLine) {
+        if ($startLine <= 0 || $endLine < $startLine || $errLine <= 0) {
             return false;
+        }
+
+        // 限制读取行数，防止内存溢出
+        $maxLinesToRead = 50;
+        if ($endLine - $startLine > $maxLinesToRead) {
+            $endLine = $startLine + $maxLinesToRead;
         }
 
         // 检查文件是否存在且可读
@@ -282,11 +291,17 @@ trait ExceptionTrait
             return false;
         }
 
+        // 安全检查：确保文件在允许的目录内（防止目录遍历）
+        $realFilePath = realpath($filePath);
+        $basePath = realpath(base_path());
+        if ($realFilePath === false || $basePath === false || ! str_starts_with($realFilePath, $basePath)) {
+            return false;
+        }
+
         // 初始化结果数组和当前行计数器
         $exceptionCode = '';
         $currentLine = 0;
         $file = null;
-        $errLine = $e->getLine();
 
         try {
             // 打开文件
@@ -299,28 +314,30 @@ trait ExceptionTrait
             while (($line = fgets($file)) !== false) {
                 $currentLine++;
                 if ($currentLine >= $startLine && $currentLine <= $endLine) {
-                    // 去除行尾的换行符，并将该行添加到结果数组中
+                    // 限制每行长度
+                    if (strlen($line) > 200) {
+                        $line = substr($line, 0, 200) . "... [TRUNCATED]\n";
+                    }
+                    // HTML 转义，防止 XSS
+                    $escapedLine = htmlspecialchars($line, ENT_QUOTES | ENT_HTML5, 'UTF-8');
                     if ($currentLine == $errLine) {
-                        $exceptionCode .= '<span class="error-line-code" style="color: red;">'.$currentLine.'|'.$line.'</span>';
+                        $exceptionCode .= '<span class="error-line-code">'.$currentLine.'|'.$escapedLine.'</span>';
                     } else {
-                        $exceptionCode .= $currentLine.'|'.$line;
+                        $exceptionCode .= $currentLine.'|'.$escapedLine;
                     }
                 }
                 if ($currentLine > $endLine) {
-                    break; // 如果已经超过了所需的最后一行，则停止读取
+                    break;
                 }
             }
         } catch (\Throwable) {
-            // 文件操作失败，返回 false
             return false;
         } finally {
-            // 确保文件句柄被关闭
             if ($file !== null && is_resource($file)) {
                 fclose($file);
             }
         }
 
-        // 返回结果数组
         return $exceptionCode;
     }
 
@@ -331,6 +348,9 @@ trait ExceptionTrait
             $this->initError($e);
         }
 
+        $file = $e->getFile();
+        $line = $e->getLine();
+
         $content = [
             [
                 'label' => '异常信息',
@@ -340,12 +360,12 @@ trait ExceptionTrait
                 'label' => '状态码',
                 'type' => 'text',
                 'value' => self::$code,
-            ], [
+            ],             [
                 'label' => '异常文件',
                 'type' => 'debug_file',
-                'value' => str_replace(base_path(), '', $e->getFile()).':'.$e->getLine().' (行)',
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
+                'value' => $this->getRelativePath($file).':'.$line.' (行)',
+                'file' => $file,
+                'line' => $line,
             ], [
                 'label' => '异常代码',
                 'type' => 'code',
@@ -353,12 +373,27 @@ trait ExceptionTrait
             ], [
                 'label' => '异常堆栈',
                 'type' => 'code',
-                'value' => str_replace(base_path(), '', $e->getTraceAsString()),
+                'value' => $this->getRelativePath($e->getTraceAsString()),
             ],
         ];
         // 如果是语法错误，$showTrace 为 true 就会陷入死循环
         $showTrace = ! $e instanceof ParseError;
 
         return $this->outputDebugHtml($content, self::$code.':'.self::$message, self::$code, $showTrace);
+    }
+
+    /**
+     * 获取相对于项目根目录的路径
+     *
+     * @param string $path 绝对路径
+     * @return string 相对路径
+     */
+    protected function getRelativePath(string $path): string
+    {
+        $basePath = base_path();
+        if (str_starts_with($path, $basePath)) {
+            return substr($path, strlen($basePath));
+        }
+        return $path;
     }
 }

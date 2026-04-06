@@ -23,10 +23,9 @@ use zxf\Trace\TraceExceptionHandler;
 class TraceServiceProvider extends ServiceProvider
 {
     /**
-     * 服务提供者是否延迟加载（false 表示立即加载）
-     * Laravel 11+ 已移除此属性，保留兼容性
+     * 标记是否已注册异常处理器，防止重复初始化
      */
-    protected bool $defer = false;
+    private static bool $exceptionHandlerRegistered = false;
 
     /**
      * 启动服务（在所有服务注册后调用）
@@ -36,7 +35,6 @@ class TraceServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // 加载视图目录（从包内加载，不发布）
-        // 视图别名：trace
         $this->loadViewsFrom(__DIR__ . '/../../Resources/views', 'trace');
 
         // 加载 Trace 路由文件
@@ -46,14 +44,13 @@ class TraceServiceProvider extends ServiceProvider
         $this->registerMiddleware(TraceMiddleware::class);
 
         // 发布配置文件到项目配置目录
-        // 标签：trace
         $this->publishes([
             __DIR__ . '/../../../config/trace.php' => config_path('trace.php'),
         ], ['trace']);
 
         // 将 zxf/trace 版本信息添加到 Laravel about 命令输出中
         AboutCommand::add('Extend', [
-            'zxf/trace' => fn () => InstalledVersions::getPrettyVersion('zxf/trace'),
+            'zxf/trace' => fn () => InstalledVersions::getPrettyVersion('zxf/trace') ?? 'unknown',
         ]);
     }
 
@@ -61,24 +58,51 @@ class TraceServiceProvider extends ServiceProvider
      * 注册服务（在启动前调用）
      *
      * 执行时机：服务容器注册阶段
-     *
-     * 注意：
-     * 1. Trace 处理器注册为单例，确保整个请求周期内使用同一个实例
-     * 2. 异常处理器也注册为单例，避免重复创建
-     * 3. 两者协同工作：TraceExceptionHandler 包装原始异常处理器
      */
     public function register(): void
     {
         // 注册路由服务提供者
         $this->app->register(RouteServiceProvider::class);
 
-        // 注册 Trace 处理器为单例（app('trace')）
-        // 注意：Handle 单例会被多个请求共享，因此内部使用 requestId 进行状态隔离
+        // 注册 Trace 处理器为单例
+        $this->registerTraceHandle();
+
+        // 注册异常处理器（带防止重复初始化检查）
+        $this->registerExceptionHandler();
+    }
+
+    /**
+     * 注册 Trace 处理器
+     *
+     * @return void
+     */
+    private function registerTraceHandle(): void
+    {
+        // 如果已经注册，直接返回
+        if ($this->app->bound('trace')) {
+            return;
+        }
+
         $this->app->singleton(Handle::class, function ($app) {
             return new Handle($app);
         });
-        // 设置别名，可以通过 app('trace') 访问
+
         $this->app->alias(Handle::class, 'trace');
+    }
+
+    /**
+     * 注册异常处理器
+     *
+     * 注意：此方法带重复初始化保护，确保只注册一次
+     *
+     * @return void
+     */
+    private function registerExceptionHandler(): void
+    {
+        // 检查是否已经注册过
+        if (self::$exceptionHandlerRegistered) {
+            return;
+        }
 
         // 检查 Laravel 版本
         $laravelVersion = $this->app->version();
@@ -86,20 +110,21 @@ class TraceServiceProvider extends ServiceProvider
 
         if ($isLaravel11OrHigher) {
             // Laravel 11+ 使用新的异常处理机制
-            // 通过 bootstrap/app.php 的 withExceptions() 配置
-            // 这里不直接替换 ExceptionHandler，提供兼容性支持
+            // 仅在控制台或测试环境注册传统异常处理器
+            // Web 环境通过 bootstrap/app.php 的 withExceptions() 配置
             if ($this->app->runningInConsole() || $this->app->environment('testing')) {
-                // 仅在控制台或测试环境注册 TraceExceptionHandler
                 $this->registerLegacyExceptionHandler();
+                self::$exceptionHandlerRegistered = true;
             }
         } else {
-            // Laravel 10 及以下版本
+            // Laravel 10 及以下版本，注册传统异常处理器
             $this->registerLegacyExceptionHandler();
+            self::$exceptionHandlerRegistered = true;
         }
     }
 
     /**
-     * 注册传统的异常处理器（用于 Laravel 10 及以下）
+     * 注册传统的异常处理器
      *
      * @return void
      */
@@ -135,21 +160,11 @@ class TraceServiceProvider extends ServiceProvider
      */
     protected function registerMiddleware(string $middleware): void
     {
-        // 检查 Laravel 版本
-        // $laravelVersion = $this->app->version();
-        // $isLaravel11OrHigher = version_compare($laravelVersion, '11.0.0', '>=');
-
         // 获取 HTTP 内核实例
         $kernel = $this->app->make(Kernel::class);
 
         // 将中间件添加到全局中间件栈的最前面
-        // 这样可以在所有其他中间件之前拦截请求
         $kernel->prependMiddleware($middleware);
-
-        // 其他可选的中间件注册方式：
-        // $kernel->pushMiddleware($middleware);              // 追加在后面
-        // $kernel->appendMiddlewareToGroup('web', $middleware);  // 追加到 web 组
-        // $kernel->prependMiddlewareToGroup('web', $middleware); // 放到 web 组最前面
     }
 
     /**
@@ -159,7 +174,6 @@ class TraceServiceProvider extends ServiceProvider
      */
     public function provides(): array
     {
-        // 返回空数组，因为我们已经显式注册了所有服务
         return [];
     }
 }

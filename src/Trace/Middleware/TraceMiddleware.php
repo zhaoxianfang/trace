@@ -27,6 +27,16 @@ class TraceMiddleware
     protected $handle;
 
     /**
+     * 已处理请求跟踪数组 - 使用静态变量减少内存分配
+     */
+    protected static array $processedRequests = [];
+
+    /**
+     * 最大跟踪请求数，防止内存泄漏
+     */
+    protected static int $maxTrackedRequests = 1000;
+
+    /**
      * 处理 HTTP 请求
      *
      * @param  Request  $request  HTTP 请求对象
@@ -38,12 +48,14 @@ class TraceMiddleware
     {
         // 使用请求对象 ID 检查是否已经处理过此请求
         $requestId = spl_object_id($request);
-        static $processedRequests = [];
 
         // 如果已处理过，直接返回响应，避免重复处理
-        if (isset($processedRequests[$requestId])) {
+        if (isset(self::$processedRequests[$requestId])) {
             return $next($request);
         }
+
+        // 清理过期的请求跟踪（防止内存泄漏）
+        $this->cleanupProcessedRequests();
 
         // 获取 Trace 处理器实例
         $this->handle = app('trace');
@@ -55,7 +67,7 @@ class TraceMiddleware
         $response = $next($request);
 
         // 标记此请求已处理
-        $processedRequests[$requestId] = true;
+        self::$processedRequests[$requestId] = time();
 
         // 检查响应是否需要 Trace 处理
         if (! $this->shouldHandleResponse($response, $request)) {
@@ -68,6 +80,24 @@ class TraceMiddleware
         } catch (\Exception) {
             // 如果 Trace 处理失败，返回原始响应（静默处理）
             return $response;
+        }
+    }
+
+    /**
+     * 清理过期的请求跟踪记录
+     *
+     * @return void
+     */
+    protected function cleanupProcessedRequests(): void
+    {
+        // 当跟踪的请求数超过限制时，清理一半的旧记录
+        if (count(self::$processedRequests) >= self::$maxTrackedRequests) {
+            self::$processedRequests = array_slice(
+                self::$processedRequests,
+                - (int)(self::$maxTrackedRequests / 2),
+                null,
+                true
+            );
         }
     }
 
@@ -136,19 +166,19 @@ class TraceMiddleware
     public function terminate($request, $response)
     {
         try {
-            // 获取请求 ID
+            // 获取请求对象 ID
             $requestId = spl_object_id($request);
 
-            // 通过反射获取 Handle 实例的 requestId
+            // 清理已处理请求跟踪
+            unset(self::$processedRequests[$requestId]);
+
+            // 清理 TraceExceptionHandler 中的请求级别异常哈希
+            // 使用 Handle 类中的静态方法获取当前请求ID，避免反射开销
             if (app()->bound('trace')) {
                 $trace = app('trace');
-                $reflectionClass = new \ReflectionClass($trace);
-                if ($reflectionClass->hasProperty('requestId')) {
-                    $requestIdProperty = $reflectionClass->getProperty('requestId');
-                    $requestIdProperty->setAccessible(true);
-                    $traceRequestId = $requestIdProperty->getValue($trace);
-
-                    // 清理 TraceExceptionHandler 中的请求级别异常哈希
+                // 如果 trace 有获取请求ID的方法，使用它
+                if (method_exists($trace, 'getRequestId')) {
+                    $traceRequestId = $trace->getRequestId();
                     TraceExceptionHandler::clearRequestExceptions($traceRequestId);
                 }
             }

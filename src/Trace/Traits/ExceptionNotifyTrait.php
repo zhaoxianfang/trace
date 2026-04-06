@@ -13,25 +13,26 @@ trait ExceptionNotifyTrait
     #[NoReturn]
     public function showExitMessage(Throwable $e): void
     {
-        $code = self::$code ?? 500;
-        $message = self::$isSysErr ? $e->getMessage() : self::$message;
+        $code = (int) (self::$code ?? 500);
+        $rawMessage = self::$isSysErr ? $e->getMessage() : self::$message;
+        $message = htmlspecialchars($rawMessage, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $extendedMessage = '';
 
         if (config('app.debug')) {
-
-            $errFile = str_replace(base_path(), '', $e->getFile()).':'.$e->getLine().' (行)';
+            $errFile = htmlspecialchars(str_replace(base_path(), '', $e->getFile()).':'.$e->getLine().' (行)', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $extendedMessage .= "<p style='font-size: 10px;'>[异常提示]:</p>";
             $extendedMessage .= "<p style='font-size: 10px;'>➤ [异常文件]:{$errFile}</p>";
 
             // 匹配：Target class [admin] does not exist.
-            if (preg_match('/Target class \[([a-z]+)\] does not exist\./', $message, $matches)) {
+            if (preg_match('/Target class \[([a-z]+)\] does not exist\./', $rawMessage, $matches)) {
+                $className = htmlspecialchars($matches[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
                 $extendedMessage .= "<p style='font-size: 10px;'>[调试提示]:</p>";
-                $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$matches[1]}」相关的类、中间件、路由是否存在；</p>";
-                $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$matches[1]}」相关的命名空间或字符串大小写等是否正确</p>";
+                $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$className}」相关的类、中间件、路由是否存在；</p>";
+                $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$className}」相关的命名空间或字符串大小写等是否正确</p>";
             }
         }
 
-        $sysTitle = config('app.name', '威四方');
+        $sysTitle = htmlspecialchars(config('app.name', '威四方'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         // 定义一个带样式的HTML内容
         $html = <<<HTML
 <!DOCTYPE html>

@@ -9,7 +9,13 @@ use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 /**
- * 处理异常错误
+ * Trace 异常处理器
+ *
+ * 负责全局异常捕捉和处理，包括：
+ * 1. 记录异常日志
+ * 2. 渲染异常响应
+ * 3. 支持自定义回调处理
+ * 4. 防止重复报告
  */
 class TraceExceptionHandler implements ExceptionHandler
 {
@@ -19,25 +25,47 @@ class TraceExceptionHandler implements ExceptionHandler
 
     protected bool $rendering = false;
 
-    protected int $maxReportedExceptions = 100; // 防止内存泄漏
+    protected int $maxReportedExceptions = 100;
 
-    // 添加异常跟踪数组，用于去重
     protected array $reportedHashes = [];
 
     protected Handle $trace;
 
-    // 请求级别的异常处理标记，防止同一异常在单次请求中被多次处理
     protected static array $requestExceptionHashes = [];
+
+    /**
+     * 标记是否已经注册全局异常监听
+     */
+    private static bool $globalListenerRegistered = false;
 
     public function __construct(ExceptionHandler $handler)
     {
         $this->handler = $handler;
+        $this->initTrace();
+    }
 
+    /**
+     * 初始化 Trace 实例
+     *
+     * @return void
+     */
+    protected function initTrace(): void
+    {
         try {
-            $this->trace = app('trace');
+            if (app()->bound('trace')) {
+                $this->trace = app('trace');
+            } else {
+                // 如果 trace 服务不可用，创建一个最小实例
+                $this->trace = new Handle(app());
+            }
         } catch (\Throwable $e) {
-            // 如果 trace 服务不可用，创建一个最小实例
-            $this->trace = new Handle(app());
+            // 创建最小化的 Handle 实例作为回退
+            $this->trace = new class(app()) extends Handle {
+                public function __construct($app)
+                {
+                    // 不调用父类构造函数，避免依赖问题
+                }
+            };
         }
     }
 
@@ -61,7 +89,6 @@ class TraceExceptionHandler implements ExceptionHandler
             try {
                 $this->trace->initError($e);
             } catch (\Throwable $initError) {
-                // 如果初始化失败，记录错误但不中断流程
                 error_log('[Trace] Failed to initialize error: '.$initError->getMessage());
             }
 
@@ -75,54 +102,82 @@ class TraceExceptionHandler implements ExceptionHandler
             // 防止内存泄漏，限制存储的异常数量
             $this->cleanupReportedExceptions();
 
-            // 标记为已报告（全局级别）
+            // 标记为已报告
             $this->reportedHashes[$exceptionHash] = microtime(true);
-
-            // 标记为已在当前请求中报告（请求级别）
             self::$requestExceptionHashes[$requestExceptionHash] = true;
-
             $this->lastException = $e;
 
-            try {
-                // 执行跟踪相关的预处理
-                $this->beforeReport($e);
+            // 执行报告流程
+            $this->executeReport($e);
 
-                // 记录日志（检查是否已经记录过，防止重复记录）
-                // 注意：检查 request 是否可用，避免在非 HTTP 环境下出错
-                $logAlreadyRecorded = false;
-                try {
-                    if (app()->bound('request') && request()) {
-                        $logAlreadyRecorded = request()->has('log_already_recorded');
-                    }
-                } catch (\Throwable) {
-                    // 静默处理，使用默认值
-                }
-
-                if (! $logAlreadyRecorded) {
-                    $this->trace->writeLog($e);
-                }
-
-                // 调用原始 report 方法
-                if (method_exists($this->handler, 'report')) {
-                    $this->handler->report($e);
-                }
-
-                // 执行报告后的处理
-                $this->afterReport($e);
-
-            } catch (Throwable $reportError) {
-                // 避免报告过程中的异常导致无限循环
-                // 记录日志
-                try {
-                    $this->trace->writeLog($reportError);
-                } catch (\Throwable) {
-                    // 最后的保底，直接使用 error_log
-                    error_log('[Trace] Exception in reporting: '.$reportError->getMessage());
-                }
-            }
         } catch (Throwable $criticalError) {
-            // 最外层的异常捕获，确保不会导致应用崩溃
             error_log('[Trace] Critical error in report(): '.$criticalError->getMessage());
+        }
+    }
+
+    /**
+     * 执行异常报告流程
+     *
+     * @param Throwable $e
+     * @return void
+     */
+    protected function executeReport(Throwable $e): void
+    {
+        try {
+            // 执行跟踪相关的预处理
+            $this->beforeReport($e);
+
+            // 记录日志
+            $this->performLogWrite($e);
+
+            // 调用原始 report 方法
+            if (method_exists($this->handler, 'report')) {
+                $this->handler->report($e);
+            }
+
+            // 执行报告后的处理
+            $this->afterReport($e);
+
+        } catch (Throwable $reportError) {
+            $this->handleReportError($reportError);
+        }
+    }
+
+    /**
+     * 执行日志写入
+     *
+     * @param Throwable $e
+     * @return void
+     */
+    protected function performLogWrite(Throwable $e): void
+    {
+        // 检查是否已经记录过
+        $logAlreadyRecorded = false;
+        try {
+            if (app()->bound('request') && request()) {
+                $logAlreadyRecorded = request()->has('log_already_recorded');
+            }
+        } catch (\Throwable) {
+            // 静默处理
+        }
+
+        if (! $logAlreadyRecorded) {
+            $this->trace->writeLog($e);
+        }
+    }
+
+    /**
+     * 处理报告过程中的错误
+     *
+     * @param Throwable $reportError
+     * @return void
+     */
+    protected function handleReportError(Throwable $reportError): void
+    {
+        try {
+            $this->trace->writeLog($reportError);
+        } catch (\Throwable) {
+            error_log('[Trace] Exception in reporting: '.$reportError->getMessage());
         }
     }
 
@@ -139,70 +194,117 @@ class TraceExceptionHandler implements ExceptionHandler
         $this->rendering = true;
         $this->lastException = $e;
 
+        try {
+            $response = $this->doRender($request, $e);
+            $this->rendering = false;
+            return $response;
+        } catch (Throwable $renderError) {
+            $this->rendering = false;
+            if (config('app.debug', false)) {
+                error_log('[Trace] Render error: ' . $renderError->getMessage());
+            }
+            return $this->handler->render($request, $e);
+        }
+    }
+
+    /**
+     * 执行实际的渲染逻辑
+     *
+     * @param mixed $request
+     * @param Throwable $e
+     * @return Response
+     */
+    protected function doRender($request, Throwable $e): Response
+    {
+        // 初始化错误信息（如果尚未初始化）
         if (! $this->trace::$initErr) {
-            // 可能部分异常不会走 report，例如：abort(401,'...');
-            // 手动重新调用  report报告
             $this->trace->initError($e);
         }
 
-        // 运行自定义闭包回调
+        // 1. 尝试自定义回调处理
+        $callbackResponse = $this->tryCustomCallback($e);
+        if ($callbackResponse !== null) {
+            return $callbackResponse;
+        }
+
+        // 2. 尝试模块自定义异常处理
+        $moduleResponse = $this->tryModuleHandler($e, $request);
+        if ($moduleResponse !== null) {
+            return $moduleResponse;
+        }
+
+        // 3. 根据请求类型和调试模式渲染响应
+        return $this->renderByContext($request, $e);
+    }
+
+    /**
+     * 尝试自定义回调处理
+     *
+     * @param Throwable $e
+     * @return Response|null
+     */
+    protected function tryCustomCallback(Throwable $e): ?Response
+    {
         try {
-            $callRes = $this->trace->runCallbackHandle($e);
-            if (! empty($callRes) && $callRes instanceof Response) {
-                $this->rendering = false;
-                return $callRes;
+            $result = $this->trace->runCallbackHandle($e);
+            if ($result instanceof Response) {
+                return $result;
             }
         } catch (Throwable $err) {
             if (config('app.debug', false)) {
-                error_log('[Trace] 回调处理错误: ' . $err->getMessage());
+                error_log('[Trace] Callback error: ' . $err->getMessage());
             }
         }
+        return null;
+    }
 
+    /**
+     * 尝试模块自定义异常处理
+     *
+     * @param Throwable $e
+     * @param mixed $request
+     * @return Response|null
+     */
+    protected function tryModuleHandler(Throwable $e, $request): ?Response
+    {
         try {
-            // 如果模块下定义了自定义的异常接管类 Handler，则交由模块下的异常类自己处理
             if ($this->trace->hasModuleCustomException()) {
-                $moduleResponse = $this->trace->handleModulesCustomException($e, $request);
-                if ($moduleResponse) {
-                    $this->rendering = false;
-                    return $moduleResponse;
+                $response = $this->trace->handleModulesCustomException($e, $request);
+                if ($response instanceof Response) {
+                    return $response;
                 }
             }
         } catch (Throwable $err) {
             if (config('app.debug', false)) {
-                error_log('[Trace] 模块异常处理错误: ' . $err->getMessage());
+                error_log('[Trace] Module handler error: ' . $err->getMessage());
             }
-            // 可能自定义接管的异常类也有异常，忽略并继续处理
+        }
+        return null;
+    }
+
+    /**
+     * 根据上下文渲染响应
+     *
+     * @param mixed $request
+     * @param Throwable $e
+     * @return Response
+     */
+    protected function renderByContext($request, Throwable $e): Response
+    {
+        $isAjaxRequest = $request->is('api/*') || ! $request->isMethod('get') || $request->expectsJson();
+        $isDebug = config('app.debug') || app()->runningInConsole();
+
+        // 调试模式下返回详细错误信息
+        if ($isDebug && ! $isAjaxRequest) {
+            return $this->trace->debug($e);
         }
 
-        // 是否为 ajax 请求
-        $isAjaxRequest = ($request->is('api/*') || ! $request->isMethod('get')) || $request->expectsJson();
-        // 调试模式
-        if ((config('app.debug') || app()->runningInConsole()) && !$isAjaxRequest) {
-            try {
-                $response = $this->trace->debug($e);
-                $this->rendering = false;
-                return $response;
-            } catch (Throwable $err) {
-                // 如果调试渲染失败，使用默认渲染
-                $this->rendering = false;
-                return $this->handler->render($request, $e);
-            }
+        // 生产环境或 AJAX 请求返回友好错误
+        if ($isAjaxRequest) {
+            return $this->trace->respJson($this->trace::$message, $this->trace::$code);
         }
 
-        // 判断路径 : 不是get的api 或 json 请求
-        try {
-            if ($isAjaxRequest) {
-                $response = $this->trace->respJson($this->trace::$message, $this->trace::$code)->send();
-            } else {
-                $response = $this->trace->respView($this->trace::$message, $this->trace::$code)->send();
-            }
-            $this->rendering = false;
-            return $response;
-        } catch (Throwable $err) {
-            // 如果自定义渲染失败，使用默认渲染
-            $this->rendering = false;
-            return $this->handler->render($request, $e);
-        }
+        return $this->trace->respView($this->trace::$message, $this->trace::$code);
     }
 
     public function shouldReport(Throwable $e): bool
@@ -295,17 +397,23 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     protected function getRequestExceptionHash(Throwable $e): string
     {
-        // 通过反射获取 Handle 的 requestId 属性
-        $reflectionClass = new \ReflectionClass($this->trace);
-        $requestIdProperty = $reflectionClass->getProperty('requestId');
-        $requestIdProperty->setAccessible(true);
-        $requestId = $requestIdProperty->getValue($this->trace);
+        $requestId = '';
+
+        // 安全地获取 requestId - 使用公共方法优先，避免反射
+        try {
+            if (method_exists($this->trace, 'getRequestId')) {
+                $requestId = $this->trace->getRequestId() ?? '';
+            }
+        } catch (\Throwable) {
+            // 失败时，使用备选方案
+            $requestId = (string) time();
+        }
 
         return md5(
             get_class($e).
             $e->getFile().
             $e->getLine().
-            $requestId  // 包含请求 ID，确保请求级别的去重
+            $requestId
         );
     }
 
