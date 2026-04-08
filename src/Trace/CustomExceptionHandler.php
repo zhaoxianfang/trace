@@ -97,7 +97,7 @@ class CustomExceptionHandler
         $exceptions->dontReportDuplicates();
 
         // 注册渲染回调
-        $exceptions->render(function ($request, \Throwable $e) use ($trace) {
+        $exceptions->render(function (\Throwable $e, $request) use ($trace) {
             return self::handleExceptionRender($request, $e, $trace);
         });
 
@@ -129,7 +129,7 @@ class CustomExceptionHandler
     private static function registerDeferredHandler(Exceptions $exceptions): void
     {
         // 使用容器解析事件监听，等待服务就绪
-        $exceptions->render(function ($request, \Throwable $e) {
+        $exceptions->render(function (\Throwable $e, $request) {
             if (app()->bound('trace')) {
                 /** @var Handle $trace */
                 $trace = app('trace');
