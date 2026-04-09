@@ -95,12 +95,6 @@ class Handle
     // 存储当前请求的异常信息
     protected ?Throwable $currentException = null;
 
-    // 反射缓存 - 优化性能
-    protected static array $reflectionCache = [];
-
-    // 反射缓存最大条目数
-    protected static int $maxReflectionCacheSize = 100;
-
     // SQL 列表最大条目数
     protected int $maxSqlListSize = 500;
 
@@ -124,15 +118,6 @@ class Handle
 
     // 请求计数器，用于追踪请求次数
     protected static int $requestCounter = 0;
-
-    // 配置缓存，避免重复读取
-    protected static array $configCache = [];
-
-    // SQL 分组模式缓存
-    protected static ?array $sqlGroupPatterns = null;
-
-    // 是否启用 SQL 分组缓存
-    protected static ?bool $sqlGroupingEnabled = null;
 
     /**
      * 实例化并初始化请求级别状态
@@ -179,46 +164,16 @@ class Handle
     /**
      * 加载配置中的限制值
      *
+     * 注意：直接从配置读取，不使用缓存，确保配置实时生效
+     *
      * @return void
      */
     protected function loadConfigLimits(): void
     {
-        if (! isset(self::$configCache['limits'])) {
-            self::$configCache['limits'] = config('trace.limits', []);
-        }
-
-        $limits = self::$configCache['limits'];
+        $limits = config('trace.limits', []);
         $this->maxSqlListSize = $limits['max_sql_count'] ?? 500;
         $this->maxSqlLength = $limits['max_sql_length'] ?? 1500;
         $this->maxBindings = $limits['max_bindings'] ?? 50;
-        self::$maxReflectionCacheSize = $limits['max_reflection_cache'] ?? 100;
-    }
-
-    /**
-     * 获取缓存的配置值
-     *
-     * @param string $key 配置键名
-     * @param mixed $default 默认值
-     * @return mixed
-     */
-    protected static function getCachedConfig(string $key, mixed $default = null): mixed
-    {
-        if (! array_key_exists($key, self::$configCache)) {
-            self::$configCache[$key] = config($key, $default);
-        }
-        return self::$configCache[$key];
-    }
-
-    /**
-     * 清除配置缓存（用于配置变更时）
-     *
-     * @return void
-     */
-    public static function clearConfigCache(): void
-    {
-        self::$configCache = [];
-        self::$sqlGroupPatterns = null;
-        self::$sqlGroupingEnabled = null;
     }
 
     /**
@@ -264,6 +219,7 @@ class Handle
      * 监听模型事件
      *
      * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
+     * 只监听 CURD 操作（创建、更新、删除），不包括 retrieved 等查询操作
      */
     public function listenModelEvent(): void
     {
@@ -272,15 +228,37 @@ class Handle
             return;
         }
 
-        $events = ['retrieved', 'creating', 'created', 'updating', 'updated', 'saving', 'saved', 'deleting', 'deleted', 'restoring', 'restored', 'replicating'];
+        // 检查 Event 类是否可用
+        if (!class_exists(Event::class)) {
+            return;
+        }
 
-        foreach ($events as $event) {
-            Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
-                // 只在当前请求 ID 匹配时才记录
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->logModelEvent($listenString, $model, $event);
+        // 只监听 CURD 相关事件（创建、更新、删除操作）
+        // 不包括：restoring(恢复中), restored(已恢复), replicating(复制), saving(保存中,在creating/updating之前触发)
+        $curdEvents = [
+            'retrieved', // 数据查询
+            'creating',  // 正在创建
+            'created',   // 创建完成
+            'updating',  // 正在更新
+            'updated',   // 更新完成
+            'deleting',  // 正在删除
+            'deleted',   // 删除完成
+        ];
+
+        foreach ($curdEvents as $event) {
+            try {
+                Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
+                    // 只在当前请求 ID 匹配时才记录
+                    if (self::$currentRequestId === $this->requestId) {
+                        $this->logModelEvent($listenString, $model, $event);
+                    }
+                });
+            } catch (\Throwable $e) {
+                // 记录监听器注册失败，但不中断流程
+                if (config('app.debug', false)) {
+                    error_log('[Trace] 模型事件监听注册失败: ' . $e->getMessage());
                 }
-            });
+            }
         }
     }
 
@@ -910,7 +888,7 @@ class Handle
             // 语法错误无法执行这个代码段
             if (str_contains($controller, '@')) {
                 [$controller, $method] = explode('@', $controller);
-                $reflector = $this->getCachedReflectionMethod($controller, $method);
+                $reflector = $this->getReflectionMethod($controller, $method);
                 if ($reflector) {
                     $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
                     $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
@@ -923,7 +901,7 @@ class Handle
                 $result['uses'] = $uses;
             } elseif (is_string($uses) && str_contains($uses, '@__invoke')) {
                 if (class_exists($controller) && method_exists($controller, 'render')) {
-                    $reflector = $this->getCachedReflectionMethod($controller, 'render');
+                    $reflector = $this->getReflectionMethod($controller, 'render');
                     if ($reflector) {
                         $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
                         $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
@@ -961,43 +939,22 @@ class Handle
     }
 
     /**
-     * 获取缓存的反射方法
+     * 获取反射方法
+     *
+     * 注意：不使用缓存，每次直接创建反射对象，避免内存累积
      *
      * @param  string  $class 类名
      * @param  string  $method 方法名
      * @return \ReflectionMethod|null
      */
-    private function getCachedReflectionMethod(string $class, string $method): ?\ReflectionMethod
+    private function getReflectionMethod(string $class, string $method): ?\ReflectionMethod
     {
-        $key = $class.'::'.$method;
-
-        if (! isset(self::$reflectionCache[$key])) {
-            try {
-                self::$reflectionCache[$key] = class_exists($class) && method_exists($class, $method)
-                    ? new ReflectionMethod($class, $method)
-                    : null;
-
-                // 清理反射缓存，防止内存泄漏
-                $this->cleanupReflectionCache();
-            } catch (\Throwable) {
-                self::$reflectionCache[$key] = null;
-            }
-        }
-
-        return self::$reflectionCache[$key];
-    }
-
-    /**
-     * 清理反射缓存，防止内存溢出
-     *
-     * @return void
-     */
-    private function cleanupReflectionCache(): void
-    {
-        if (count(self::$reflectionCache) > self::$maxReflectionCacheSize) {
-            // 保留最近的一半缓存
-            $halfSize = (int) (self::$maxReflectionCacheSize / 2);
-            self::$reflectionCache = array_slice(self::$reflectionCache, -$halfSize, null, true);
+        try {
+            return class_exists($class) && method_exists($class, $method)
+                ? new ReflectionMethod($class, $method)
+                : null;
+        } catch (\Throwable) {
+            return null;
         }
     }
 
@@ -1006,48 +963,43 @@ class Handle
         $sqlTimes = 0;
         $sqlList = [];
 
-        // 获取缓存的SQL分组配置
-        if (self::$sqlGroupPatterns === null) {
-            $groupConfig = self::getCachedConfig('trace.sql_groups', ['enabled' => true, 'groups' => []]);
+        // 直接读取SQL分组配置，不使用缓存
+        $groupConfig = config('trace.sql_groups', ['enabled' => true, 'groups' => []]);
 
-            // 定义默认SQL分组规则
-            $defaultGroupPatterns = [
-                'cache' => [
-                    'name' => '缓存查询',
-                    'class' => 'sql-group-cache',
-                    'patterns' => [
-                        '/select\s+.*\s+from\s+`?cache`?/i',
-                        '/select\s+.*\s+from\s+`?cache_[\w]+`?/i',
-                        '/insert\s+into\s+`?cache`?/i',
-                        '/update\s+`?cache`?\s+set/i',
-                        '/delete\s+from\s+`?cache`?/i',
-                        '/select.*cache_key/i',
-                        '/select.*cache_value/i',
-                    ]
-                ],
-                'session' => [
-                    'name' => '会话查询',
-                    'class' => 'sql-group-session',
-                    'patterns' => [
-                        '/select\s+.*\s+from\s+`?sessions`?/i',
-                        '/insert\s+into\s+`?sessions`?/i',
-                        '/update\s+`?sessions`?\s+set/i',
-                        '/delete\s+from\s+`?sessions`?/i',
-                        '/select.*session_id/i',
-                        '/select.*user_id/i',
-                        '/select.*payload/i',
-                    ]
+        // 定义默认SQL分组规则
+        $defaultGroupPatterns = [
+            'cache' => [
+                'name' => '缓存查询',
+                'class' => 'sql-group-cache',
+                'patterns' => [
+                    '/select\s+.*\s+from\s+`?cache`?/i',
+                    '/select\s+.*\s+from\s+`?cache_[\w]+`?/i',
+                    '/insert\s+into\s+`?cache`?/i',
+                    '/update\s+`?cache`?\s+set/i',
+                    '/delete\s+from\s+`?cache`?/i',
+                    '/select.*cache_key/i',
+                    '/select.*cache_value/i',
                 ]
-            ];
+            ],
+            'session' => [
+                'name' => '会话查询',
+                'class' => 'sql-group-session',
+                'patterns' => [
+                    '/select\s+.*\s+from\s+`?sessions`?/i',
+                    '/insert\s+into\s+`?sessions`?/i',
+                    '/update\s+`?sessions`?\s+set/i',
+                    '/delete\s+from\s+`?sessions`?/i',
+                    '/select.*session_id/i',
+                    '/select.*user_id/i',
+                    '/select.*payload/i',
+                ]
+            ]
+        ];
 
-            // 合并配置和默认规则
-            self::$sqlGroupPatterns = array_merge($defaultGroupPatterns, $groupConfig['groups'] ?? []);
-            self::$sqlGroupingEnabled = $groupConfig['enabled'] ?? true;
-        }
-
-        $groupPatterns = self::$sqlGroupPatterns;
-        $groupEnabled = self::$sqlGroupingEnabled;
-        $collapsedByDefault = self::$configCache['trace.sql_groups']['collapsed_by_default'] ?? false;
+        // 合并配置和默认规则
+        $groupPatterns = array_merge($defaultGroupPatterns, $groupConfig['groups'] ?? []);
+        $groupEnabled = $groupConfig['enabled'] ?? true;
+        $collapsedByDefault = $groupConfig['collapsed_by_default'] ?? false;
 
         // 分类SQL语句
         $groupedSql = array_fill_keys(array_keys($groupPatterns), []);

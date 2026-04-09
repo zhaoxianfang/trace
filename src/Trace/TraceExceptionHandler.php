@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Request;
 use ParseError;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
+use zxf\Trace\EmergencyRenderer;
 
 /**
  * Trace 异常处理器
@@ -216,25 +217,36 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     protected function doRender($request, Throwable $e): Response
     {
-        // 初始化错误信息（如果尚未初始化）
-        if (! $this->trace::$initErr) {
-            $this->trace->initError($e);
-        }
+        try {
+            // 初始化错误信息（如果尚未初始化）
+            if (! $this->trace::$initErr) {
+                $this->trace->initError($e);
+            }
 
-        // 1. 尝试自定义回调处理
-        $callbackResponse = $this->tryCustomCallback($e);
-        if ($callbackResponse !== null) {
-            return $callbackResponse;
-        }
+            // 1. 尝试自定义回调处理
+            $callbackResponse = $this->tryCustomCallback($e);
+            if ($callbackResponse !== null) {
+                return $callbackResponse;
+            }
 
-        // 2. 尝试模块自定义异常处理
-        $moduleResponse = $this->tryModuleHandler($e, $request);
-        if ($moduleResponse !== null) {
-            return $moduleResponse;
-        }
+            // 2. 尝试模块自定义异常处理
+            $moduleResponse = $this->tryModuleHandler($e, $request);
+            if ($moduleResponse !== null) {
+                return $moduleResponse;
+            }
 
-        // 3. 根据请求类型和调试模式渲染响应
-        return $this->renderByContext($request, $e);
+            // 3. 根据请求类型和调试模式渲染响应
+            return $this->renderByContext($request, $e);
+
+        } catch (Throwable $renderError) {
+            // 如果 Trace 渲染失败，使用兜底渲染器
+            EmergencyRenderer::logError($renderError, 'TraceExceptionHandler::doRender');
+
+            // 使用紧急渲染器作为最后手段
+            $code = $e->getCode() >= 100 && $e->getCode() < 600 ? $e->getCode() : 500;
+            EmergencyRenderer::render($e, $code);
+            exit(1);
+        }
     }
 
     /**

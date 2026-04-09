@@ -7,7 +7,12 @@
 - 🎯 **SQL 智能分组** - 自动将缓存和会话相关的 SQL 语句分组展示，支持手风琴式展开/收起
 - 🔍 **代码追踪调试** - 使用 `trace()` 函数快速调试任意变量
 - 📊 **性能监控** - 实时显示请求时间、内存消耗、SQL 查询时间等
-- 🚨 **异常处理** - 优雅接管 Laravel 异常，提供详细的错误堆栈
+- 🚨 **多层次异常处理** - 四层异常保护机制，确保任何情况下都能显示友好错误页面
+  - 第1层：Laravel 11+ `withExceptions()` 集成
+  - 第2层：传统异常处理器（Laravel 10及以下）
+  - 第3层：兜底异常处理器（引导阶段错误、服务提供者异常）
+  - 第4层：紧急渲染器（Laravel 完全不可用时的最后保障）
+- 💥 **极端情况保护** - 文件缓存损坏、内存耗尽、PHP 致命错误等极端情况下的优雅降级
 - 🎨 **现代化界面** - 响应式设计，适配移动端和桌面端
 - ⚡ **零配置开箱即用** - 无需复杂配置，开箱即用
 
@@ -55,6 +60,40 @@ return [
      *       "xdebug", "espresso"
      */
     'editor' => 'phpstorm',
+];
+```
+
+### 异常处理配置
+
+```php
+return [
+    // ... 其他配置
+
+    /**
+     * 兜底错误处理配置
+     *
+     * 用于配置在 Laravel 框架无法正常工作时（如引导阶段异常、致命错误）的错误处理行为
+     */
+    'fallback_handler' => [
+        // 是否启用兜底错误处理器
+        'enabled' => true,
+
+        // 是否在调试模式下也启用兜底处理器
+        'force_enabled' => false,
+
+        // 是否在响应中包含请求ID
+        'include_request_id' => true,
+
+        // 自定义错误页面路径
+        'custom_error_view' => '',
+
+        // 紧急日志配置
+        'emergency_log' => [
+            'enabled' => true,
+            'path' => 'logs/emergency',
+            'retention_days' => 7,
+        ],
+    ],
 ];
 ```
 
@@ -239,6 +278,68 @@ try {
     // 写入本地文件日志
     Log::channel('stack')->error($message, $content);
 }
+```
+
+### 自定义错误视图
+
+#### 使用 Trace 包内置视图
+
+Trace 包提供了精美的错误页面模板，无需任何配置即可使用。支持以下状态码：
+- 403 - 禁止访问
+- 404 - 页面未找到
+- 500 - 服务器错误
+- 503 - 服务不可用
+- 通用错误页面（其他状态码）
+
+#### 自定义 Trace 包视图
+
+如果需要自定义 Trace 包的错误页面，可以发布视图文件：
+
+```bash
+php artisan vendor:publish --provider="zxf\Trace\Providers\TraceServiceProvider" --tag="trace-views"
+```
+
+发布后，视图文件将复制到 `resources/views/vendor/trace/` 目录，您可以自由修改这些视图。
+
+#### 视图命名空间
+
+Trace 包注册了 `trace::` 视图命名空间，可以直接使用：
+
+```blade
+{{-- 使用 Trace 包的布局 --}}
+@extends('trace::layouts.error')
+
+@section('content')
+    {{-- 自定义内容 --}}
+@endsection
+
+{{-- 使用统一错误页面 --}}
+@include('trace::errors.error', ['code' => 404])
+```
+
+#### 完全自定义错误视图
+
+在 `config/trace.php` 中配置自定义视图路径：
+
+```php
+'fallback_handler' => [
+    // 自定义错误视图路径（相对于 resources/views）
+    'custom_error_view' => 'errors.my-custom-error',
+],
+```
+
+然后在 `resources/views/errors/my-custom-error.blade.php` 中创建视图：
+
+```blade
+@extends('layouts.app')
+
+@section('content')
+<div class="error-container">
+    <h1>{{ $code }}</h1>
+    <p>{{ $message }}</p>
+    <a href="/">返回首页</a>
+</div>
+@endsection
 ```
 
 ## 三、高级功能
@@ -433,6 +534,30 @@ SQL 分组模式会被缓存，避免每次请求都重新编译正则表达式�
 
 ## 八、更新日志
 
+### v2.2.0 (2025-04)
+
+**异常处理增强：**
+- 🛡️ **四层异常保护机制** - 确保任何情况下都能显示友好错误页面
+- 🆘 **EmergencyRenderer** - 零依赖紧急渲染器，Laravel 完全不可用时也能工作
+- 🔧 **FallbackExceptionHandler** - 兜底异常处理器，捕获引导阶段和致命错误
+- 💾 **SafeStorage** - 安全存储操作类，缓存/文件操作异常时自动降级
+- 📝 **紧急日志系统** - Laravel 日志不可用时自动写入紧急日志
+- 🎨 **独立错误页面模板** - 不依赖 Laravel 视图系统的精美错误页面
+
+**极端情况保护：**
+- 🗄️ 文件缓存损坏自动检测和清理
+- 💥 PHP 致命错误（Fatal Error）优雅处理
+- 🔌 内存耗尽（Out of Memory）保护
+- 🔨 编译错误（Compile Error）捕获
+- ⚙️ 服务提供者异常处理
+- 📋 配置加载异常处理
+
+**改进：**
+- 🔧 错误页面支持多种格式（HTML/JSON/纯文本）
+- 🔧 自动检测客户端期望的响应格式
+- 🔧 生产环境友好的错误消息
+- 🔧 调试模式下显示详细堆栈跟踪
+
 ### v2.1.0 (2025-04)
 
 **性能优化：**
@@ -498,18 +623,23 @@ composer test
 - 所有方法必须添加 PHPDoc 注释
 - 测试覆盖率需达到 80% 以上
 
-## 十、许可证
+## 十、文档
+
+### 详细文档
+
+- [异常处理文档](docs/EXCEPTION_HANDLING.md) - 深入了解四层异常保护机制
+- [视图文档](docs/VIEWS.md) - 所有 Blade 视图的详细使用指南
+
+## 十一、许可证
 
 MIT License
 
-## 十一、联系方式
+## 十二、联系方式
 
-- 作者: weisifang.com
-- 官网: https://www.yoc.cn
-- 邮箱: support@weisifang.com
+- 官网: http://www.yoc.cn
 
 ---
 
 <p align="center">
-  <strong>本页面由 <a href="https://weisifang.com/" target="_blank">weisifang.com</a> 提供支持</strong>
+  <strong>本页面由 <a href="http://www.yoc.cn/" target="_blank">yoc.cn</a> 提供支持</strong>
 </p>

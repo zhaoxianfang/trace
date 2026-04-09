@@ -16,64 +16,125 @@ trait ExceptionNotifyTrait
         $code = (int) (self::$code ?? 500);
         $rawMessage = self::$isSysErr ? $e->getMessage() : self::$message;
         $message = htmlspecialchars($rawMessage, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $extendedMessage = '';
+        $debugInfo = '';
 
         if (config('app.debug')) {
             $errFile = htmlspecialchars(str_replace(base_path(), '', $e->getFile()).':'.$e->getLine().' (行)', ENT_QUOTES | ENT_HTML5, 'UTF-8');
-            $extendedMessage .= "<p style='font-size: 10px;'>[异常提示]:</p>";
-            $extendedMessage .= "<p style='font-size: 10px;'>➤ [异常文件]:{$errFile}</p>";
+            $debugInfo .= "<p>[异常提示]:</p>";
+            $debugInfo .= "<p>➤ [异常文件]:{$errFile}</p>";
 
             // 匹配：Target class [admin] does not exist.
             if (preg_match('/Target class \[([a-z]+)\] does not exist\./', $rawMessage, $matches)) {
                 $className = htmlspecialchars($matches[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
-                $extendedMessage .= "<p style='font-size: 10px;'>[调试提示]:</p>";
-                $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$className}」相关的类、中间件、路由是否存在；</p>";
-                $extendedMessage .= "<p style='font-size: 10px;'>➤ 请检查「{$className}」相关的命名空间或字符串大小写等是否正确</p>";
+                $debugInfo .= "<p>[调试提示]:</p>";
+                $debugInfo .= "<p>➤ 请检查「{$className}」相关的类、中间件、路由是否存在；</p>";
+                $debugInfo .= "<p>➤ 请检查「{$className}」相关的命名空间或字符串大小写等是否正确</p>";
             }
         }
 
-        $sysTitle = htmlspecialchars(config('app.name', '威四方'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        // 定义一个带样式的HTML内容
-        $html = <<<HTML
+        $title = config('app.name', '系统错误');
+
+        // 尝试使用 Blade 视图
+        try {
+            if (function_exists('view') && app()->bound('view')) {
+                $view = app('view');
+                
+                // 检查 fatal 视图是否存在
+                if ($view->exists('trace::fatal')) {
+                    $html = $view->make('trace::fatal', [
+                        'code' => $code,
+                        'message' => $message,
+                        'debugInfo' => $debugInfo,
+                        'title' => $title,
+                    ])->render();
+                    
+                    exit($html);
+                }
+            }
+        } catch (\Throwable $viewError) {
+            // 视图渲染失败，降级到通用视图
+        }
+
+        // 尝试使用 emergency 视图
+        try {
+            if (function_exists('view') && app()->bound('view')) {
+                $view = app('view');
+                if ($view->exists('trace::emergency')) {
+                    $html = $view->make('trace::emergency', [
+                        'code' => $code,
+                        'title' => $title,
+                        'message' => $message,
+                        'emoji' => '💥',
+                        'showDebug' => config('app.debug', false),
+                        'requestId' => $this->generateRequestId(),
+                        'timestamp' => date('Y-m-d H:i:s'),
+                    ])->render();
+                    
+                    exit($html);
+                }
+            }
+        } catch (\Throwable $viewError) {
+            // 视图渲染失败，降级到内置模板
+        }
+
+        // 最终兜底：直接输出
+        $this->lastResortOutput($code, $message, $title);
+    }
+
+    /**
+     * 生成请求 ID
+     *
+     * @return string
+     */
+    private function generateRequestId(): string
+    {
+        try {
+            if (function_exists('request') && request()) {
+                return request()->header('X-Request-ID', substr(md5(uniqid('', true)), 0, 12));
+            }
+        } catch (\Throwable $e) {
+            // 忽略请求获取错误
+        }
+        return substr(md5(uniqid('', true)), 0, 12);
+    }
+
+    /**
+     * 最后的输出方案（当所有视图都不可用时）
+     *
+     * @param int $code
+     * @param string $message
+     * @param string $title
+     */
+    #[NoReturn]
+    private function lastResortOutput(int $code, string $message, string $title): void
+    {
+        $safeTitle = htmlspecialchars($title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        
+        echo <<<HTML
 <!DOCTYPE html>
-<html lang="zh-cn" >
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>出错啦|{$sysTitle}</title>
-    <meta name="renderer" content="webkit">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <style type="text/css">
-        body{background-color:#2f3242}svg{position:absolute;top:50%;left:50%;margin-top:-250px;margin-left:-400px}.message-box{height:200px;width:380px;position:absolute;top:50%;left:50%;margin-top:-100px;margin-left:50px;color:#FFF;font-family:Roboto;font-weight:300}.message-box h1{font-size:60px;line-height:46px;margin-bottom:40px}.buttons-con .action-link-wrap{margin-top:40px}.buttons-con .action-link-wrap a{background:#007fb2;padding:8px 25px;border-radius:4px;color:#FFF;font-weight:bold;font-size:14px;transition:all .3s linear;cursor:pointer;text-decoration:none;margin-right:10px}.buttons-con .action-link-wrap a:hover{background:#5a5c6c;color:#fff}#Polygon-1,#Polygon-2,#Polygon-3,#Polygon-4,#Polygon-4,#Polygon-5{-webkit-animation:float 1s infinite ease-in-out alternate;animation:float 1s infinite ease-in-out alternate}#Polygon-2{-webkit-animation-delay:.2s;animation-delay:.2s}#Polygon-3{-webkit-animation-delay:.4s;animation-delay:.4s}#Polygon-4{-webkit-animation-delay:.6s;animation-delay:.6s}#Polygon-5{-webkit-animation-delay:.8s;animation-delay:.8s}@-webkit-keyframes float{100%{-webkit-transform:translateY(20px);transform:translateY(20px)}}@keyframes float{100%{-webkit-transform:translateY(20px);transform:translateY(20px)}}@media(max-width:450px){svg{position:absolute;top:50%;left:50%;margin-top:-250px;margin-left:-190px}.message-box{top:50%;left:50%;margin-top:-100px;margin-left:-190px;text-align:center}}
+    <title>出错啦|{$safeTitle}</title>
+    <style>
+        body{background:#f5f5f5;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0;font-family:sans-serif}
+        .box{background:#fff;padding:40px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);text-align:center;max-width:400px}
+        h1{color:#e74c3c;font-size:48px;margin:0 0 20px}
+        p{color:#666;margin:10px 0}
+        a{color:#3498db;text-decoration:none}
+        a:hover{text-decoration:underline}
     </style>
 </head>
 <body>
-
-<svg width="380px" height="500px" viewBox="0 0 837 1045" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:sketch="http://www.bohemiancoding.com/sketch/ns">
-    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" sketch:type="MSPage">
-        <path d="M353,9 L626.664028,170 L626.664028,487 L353,642 L79.3359724,487 L79.3359724,170 L353,9 Z" id="Polygon-1" stroke="#007FB2" stroke-width="6" sketch:type="MSShapeGroup"></path>
-        <path d="M78.5,529 L147,569.186414 L147,648.311216 L78.5,687 L10,648.311216 L10,569.186414 L78.5,529 Z" id="Polygon-2" stroke="#EF4A5B" stroke-width="6" sketch:type="MSShapeGroup"></path>
-        <path d="M773,186 L827,217.538705 L827,279.636651 L773,310 L719,279.636651 L719,217.538705 L773,186 Z" id="Polygon-3" stroke="#795D9C" stroke-width="6" sketch:type="MSShapeGroup"></path>
-        <path d="M639,529 L773,607.846761 L773,763.091627 L639,839 L505,763.091627 L505,607.846761 L639,529 Z" id="Polygon-4" stroke="#F2773F" stroke-width="6" sketch:type="MSShapeGroup"></path>
-        <path d="M281,801 L383,861.025276 L383,979.21169 L281,1037 L179,979.21169 L179,861.025276 L281,801 Z" id="Polygon-5" stroke="#36B455" stroke-width="6" sketch:type="MSShapeGroup"></path>
-    </g>
-</svg>
-<div class="message-box">
-    <h1>{$code}</h1>
-    <p>[{$sysTitle}]提示您,出错啦!</p>
-    <p style="font-size: 12px;">[错误信息]{$message}</p>
-    {$extendedMessage}
-    <div class="buttons-con">
-        <div class="action-link-wrap">
-            <a onClick="history.back(-1)" class="link-button link-back-button">返回上一页</a>
-            <a href="/" class="link-button">返回首页</a>
-        </div>
+    <div class="box">
+        <h1>{$code}</h1>
+        <p><strong>{$safeTitle}</strong></p>
+        <p>{$message}</p>
+        <p><a href="/">返回首页</a></p>
     </div>
-</div>
 </body>
 </html>
 HTML;
-
-        // 使用 die 输出 HTML
-        exit($html);
+        exit;
     }
 }

@@ -119,34 +119,224 @@ trait ExceptionCodeTrait
 
     /**
      * 展示错误异常给请求者( view )
+     *
+     * 视图查找优先级：
+     * 1. 用户自定义视图 (config trace.fallback_handler.custom_error_view)
+     * 2. 应用标准错误视图 (resources/views/errors/{$code})
+     * 3. Trace 包特定状态码视图 (trace::errors.{$code})
+     * 4. Trace 包通用错误视图 (trace::errors.generic)
+     * 5. 内置 HTML 模板（兜底）
      */
     public function respView($message = '出错啦!', $code = 500)
     {
-        $code = empty($code) ? 500 : $code;
-
-        if (view()->exists("errors/{$code}")) {
-            return response()->view("errors/{$code}", [
-                'code' => $code,
-                'message' => $message,
-            ], $code);
+        $code = empty($code) ? 500 : (int)$code;
+        
+        // 验证状态码范围
+        if ($code < 100 || $code > 599) {
+            $code = 500;
         }
 
-        $generalCode = substr($code, 0, 1).'xx';
-        if (view()->exists("errors/{$generalCode}")) {
-            return response()->view("errors/{$generalCode}", [
-                'code' => $code,
-                'message' => $message,
-            ], $code);
+        try {
+            // 检查视图系统是否可用
+            if (!function_exists('view') || !function_exists('config') || !app()->bound('view')) {
+                return $this->renderFallbackHtml($message, $code);
+            }
+
+            $view = app('view');
+            
+            // 1. 检查用户自定义错误视图
+            $customView = config('trace.fallback_handler.custom_error_view');
+            if (!empty($customView) && $view->exists($customView)) {
+                return response()->view($customView, [
+                    'code' => $code,
+                    'message' => $message,
+                    'title' => $this->getCodeMeg($code),
+                    'isDebug' => config('app.debug', false),
+                    'requestId' => $this->getRequestId(),
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                ], $code);
+            }
+
+            // 2. 检查应用标准错误视图
+            if ($view->exists("errors/{$code}")) {
+                return response()->view("errors/{$code}", [
+                    'code' => $code,
+                    'message' => $message,
+                    'isDebug' => config('app.debug', false),
+                ], $code);
+            }
+
+            // 检查通用状态码分组视图 (4xx, 5xx)
+            $generalCode = substr((string)$code, 0, 1).'xx';
+            if ($view->exists("errors/{$generalCode}")) {
+                return response()->view("errors/{$generalCode}", [
+                    'code' => $code,
+                    'message' => $message,
+                    'isDebug' => config('app.debug', false),
+                ], $code);
+            }
+
+            // 3. 检查 Trace 包统一错误视图
+            if ($view->exists('trace::errors.error')) {
+                return response()->view('trace::errors.error', [
+                    'code' => $code,
+                    'message' => $message,
+                    'isDebug' => config('app.debug', false),
+                    'requestId' => $this->getRequestId(),
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                ], $code);
+            }
+
+            // 4. 检查 Trace 包通用错误视图（向后兼容）
+            if ($view->exists('trace::errors.generic')) {
+                return response()->view('trace::errors.generic', [
+                    'code' => $code,
+                    'message' => $message,
+                    'isDebug' => config('app.debug', false),
+                    'requestId' => $this->getRequestId(),
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                ], $code);
+            }
+
+            // 5. 使用内置的错误页面模板（最终兜底）
+            return $this->renderFallbackHtml($message, $code);
+        } catch (\Throwable $e) {
+            // 任何视图渲染错误都降级到内置模板
+            return $this->renderFallbackHtml($message, $code);
         }
-        if (view()->exists('errors/500')) {
-            return response()->view('errors/500', [
-                'code' => $code,
-                'message' => $message,
-            ], $code);
+    }
+
+    /**
+     * 渲染内置的错误页面（当没有自定义视图时使用）
+     *
+     * @param string $message 错误消息
+     * @param int $code HTTP 状态码
+     * @return \Illuminate\Http\Response
+     */
+    private function renderFallbackHtml(string $message, int $code): \Illuminate\Http\Response
+    {
+        $title = $this->getErrorTitle($code);
+        $emoji = $this->getErrorEmoji($code);
+        $isDebug = config('app.debug', false);
+        $requestId = $this->getRequestId();
+
+        // 尝试使用 trace::errors.generic 视图
+        try {
+            if (function_exists('view') && app()->bound('view')) {
+                $view = app('view');
+                
+                if ($view->exists('trace::errors.generic')) {
+                    return response()->view('trace::errors.generic', [
+                        'code' => $code,
+                        'message' => $message,
+                        'title' => $title,
+                        'emoji' => $emoji,
+                        'isDebug' => $isDebug,
+                        'requestId' => $requestId,
+                        'timestamp' => now()->format('Y-m-d H:i:s'),
+                    ], $code);
+                }
+            }
+        } catch (\Throwable $e) {
+            // 视图渲染失败，降级到内置 HTML
         }
 
-        $html = '<title>出错啦</title><style>body{margin:0;padding:0;height:100vh;width:100vw;display:flex;justify-content:center;align-items:center;font-family:Arial,sans-serif;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);overflow:hidden}.message{color:red;font-size:24px;padding:20px;font-weight: 600;margin-bottom: 20px; letter-spacing: 1px;}.link{text-align:center;margin-top:20px}a{color:white;font-size:14px;text-align:center}.rect{background:linear-gradient(to left,#196aa8,#196aa8) left top no-repeat,linear-gradient(to bottom,#196aa8,#196aa8) left top no-repeat,linear-gradient(to left,#196aa8,#196aa8) right top no-repeat,linear-gradient(to bottom,#196aa8,#196aa8) right top no-repeat,linear-gradient(to left,#196aa8,#196aa8) left bottom no-repeat,linear-gradient(to bottom,#196aa8,#196aa8) left bottom no-repeat,linear-gradient(to left,#196aa8,#196AA8) right bottom no-repeat,linear-gradient(to left,#196aa8,#196aa8) right bottom no-repeat;background-size:2px 15px,20px 2px,2px 15px,20px 2px;}</style><body><div class="message rect">'.$code.':'.$message.'<div class="link"><a href="/">返回首页</a></div></div></body>';
+        // 尝试使用 trace::emergency 视图
+        try {
+            if (function_exists('view') && app()->bound('view')) {
+                $view = app('view');
+                if ($view->exists('trace::emergency')) {
+                    return response()->view('trace::emergency', [
+                        'code' => $code,
+                        'title' => $title,
+                        'message' => $message,
+                        'emoji' => $emoji,
+                        'showDebug' => $isDebug,
+                        'requestId' => $requestId,
+                        'timestamp' => now()->format('Y-m-d H:i:s'),
+                    ], $code);
+                }
+            }
+        } catch (\Throwable $e) {
+            // 视图渲染失败，降级到最小化视图
+        }
 
-        return response($html, 500)->header('Content-Type', 'text/html');
+        // 最终兜底：使用最小化错误视图
+        return response()->view('trace::errors.minimal', [
+            'code' => $code,
+            'title' => $title,
+            'message' => $message,
+        ], $code);
+    }
+
+    /**
+     * 获取错误标题
+     */
+    private function getErrorTitle(int $code): string
+    {
+        return $this->getCodeMeg($code);
+    }
+
+    /**
+     * 获取错误表情符号
+     */
+    private function getErrorEmoji(int $code): string
+    {
+        $emojis = [
+            400 => '🤔',
+            401 => '🔒',
+            403 => '🚫',
+            404 => '🤷',
+            405 => '🙅',
+            408 => '⏱️',
+            422 => '📝',
+            429 => '🐢',
+            500 => '💥',
+            502 => '🔌',
+            503 => '🔧',
+            504 => '⏳',
+        ];
+
+        return $emojis[$code] ?? '⚠️';
+    }
+
+    /**
+     * 获取请求ID
+     */
+    private function getRequestId(): string
+    {
+        try {
+            if (function_exists('request') && request()) {
+                return request()->header('X-Request-ID', substr(md5(uniqid('', true)), 0, 12));
+            }
+        } catch (\Throwable $e) {
+            // 忽略请求获取错误
+        }
+        return substr(md5(uniqid('', true)), 0, 12);
+    }
+
+    /**
+     * 渲染纯文本错误响应（用于 CLI 或简单场景）
+     *
+     * @param string $message 错误消息
+     * @param int $code HTTP 状态码
+     * @return \Illuminate\Http\Response
+     */
+    public function respText(string $message, int $code = 500): \Illuminate\Http\Response
+    {
+        $content = "Error {$code}: {$message}\n";
+
+        if (config('app.debug')) {
+            $content .= "\nStack Trace:\n";
+            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+            foreach ($trace as $i => $t) {
+                $file = $t['file'] ?? 'unknown';
+                $line = $t['line'] ?? 0;
+                $content .= "#{$i} {$file}:{$line}\n";
+            }
+        }
+
+        return response($content, $code)
+            ->header('Content-Type', 'text/plain; charset=utf-8');
     }
 }

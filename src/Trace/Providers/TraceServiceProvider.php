@@ -10,6 +10,8 @@ use Composer\InstalledVersions;
 use zxf\Trace\Handle;
 use zxf\Trace\Middleware\TraceMiddleware;
 use zxf\Trace\TraceExceptionHandler;
+use zxf\Trace\FallbackExceptionHandler;
+use zxf\Trace\EmergencyRenderer;
 
 /**
  * Trace 服务提供者
@@ -34,8 +36,8 @@ class TraceServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // 加载视图目录（从包内加载，不发布）
-        $this->loadViewsFrom(__DIR__ . '/../../Resources/views', 'trace');
+        // 注册视图命名空间
+        $this->registerViewNamespace();
 
         // 加载 Trace 路由文件
         $this->loadRoutesFrom(__DIR__.'/../routes/trace.php');
@@ -48,10 +50,53 @@ class TraceServiceProvider extends ServiceProvider
             __DIR__ . '/../../../config/trace.php' => config_path('trace.php'),
         ], ['trace']);
 
+        // 发布视图文件（可选）
+        $this->publishes([
+            __DIR__ . '/../../Resources/views' => resource_path('views/vendor/trace'),
+        ], ['trace', 'trace-views']);
+
         // 将 zxf/trace 版本信息添加到 Laravel about 命令输出中
         AboutCommand::add('Extend', [
             'zxf/trace' => fn () => InstalledVersions::getPrettyVersion('zxf/trace') ?? 'unknown',
         ]);
+
+        // 标记 Laravel 已启动完成
+        FallbackExceptionHandler::markLaravelBooted();
+    }
+
+    /**
+     * 注册视图命名空间
+     *
+     * 注册 'trace' 命名空间，使得可以使用 trace:: 前缀访问扩展包的视图
+     *
+     * @return void
+     */
+    private function registerViewNamespace(): void
+    {
+        try {
+            $viewPath = __DIR__ . '/../../Resources/views';
+
+            // 验证视图目录是否存在
+            if (!is_dir($viewPath)) {
+                EmergencyRenderer::logError("Trace view path not found: {$viewPath}", 'ViewNamespace');
+                return;
+            }
+
+            // 使用 loadViewsFrom 注册命名空间
+            $this->loadViewsFrom($viewPath, 'trace');
+
+            // 如果应用视图目录中存在自定义视图，则优先使用
+            $customViewPath = resource_path('views/vendor/trace');
+            if (is_dir($customViewPath)) {
+                // 确保视图工厂已绑定
+                if ($this->app->bound('view')) {
+                    $this->app->make('view')->prependNamespace('trace', $customViewPath);
+                }
+            }
+        } catch (\Throwable $e) {
+            // 记录错误但不中断应用启动
+            EmergencyRenderer::logError($e, 'ViewNamespaceRegistration');
+        }
     }
 
     /**
@@ -61,6 +106,9 @@ class TraceServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // 注册兜底异常处理器（最先注册，确保在引导阶段就能捕获错误）
+        $this->registerFallbackHandler();
+
         // 注册路由服务提供者
         $this->app->register(RouteServiceProvider::class);
 
@@ -69,6 +117,87 @@ class TraceServiceProvider extends ServiceProvider
 
         // 注册异常处理器（带防止重复初始化检查）
         $this->registerExceptionHandler();
+
+        // 注册引导阶段错误保护
+        $this->registerBootstrapProtection();
+    }
+
+    /**
+     * 注册兜底异常处理器
+     *
+     * 在 Laravel 框架完全加载之前就能捕获和处理异常
+     *
+     * @return void
+     */
+    private function registerFallbackHandler(): void
+    {
+        // 只在 Web 环境下注册
+        if (PHP_SAPI === 'cli') {
+            return;
+        }
+
+        // 注册兜底处理器
+        FallbackExceptionHandler::register();
+    }
+
+    /**
+     * 注册引导阶段错误保护
+     *
+     * 捕获配置加载、服务提供者初始化等引导阶段的错误
+     *
+     * @return void
+     */
+    private function registerBootstrapProtection(): void
+    {
+        // 监听容器解析错误
+        $this->app->beforeResolving(function ($abstract, $parameters) {
+            try {
+                // 检查是否是缓存相关的类
+                if (is_string($abstract) && str_contains($abstract, 'Cache')) {
+                    // 预检查缓存配置
+                    $this->validateCacheConfig();
+                }
+            } catch (\Throwable $e) {
+                EmergencyRenderer::logError($e, 'BootstrapProtection');
+            }
+        });
+    }
+
+    /**
+     * 验证缓存配置
+     *
+     * @return void
+     * @throws \RuntimeException
+     */
+    private function validateCacheConfig(): void
+    {
+        try {
+            $cachePath = storage_path('framework/cache');
+            if (!is_dir($cachePath)) {
+                return;
+            }
+
+            // 检查缓存目录是否可读
+            if (!is_readable($cachePath)) {
+                throw new \RuntimeException("Cache directory is not readable: {$cachePath}");
+            }
+
+            // 检查是否存在损坏的缓存文件（简单的文件大小检查）
+            $files = glob($cachePath . '/*/*.php', GLOB_NOSORT);
+            if ($files === false) {
+                return;
+            }
+
+            foreach (array_slice($files, 0, 10) as $file) {
+                if (!is_file($file) || filesize($file) === 0) {
+                    // 发现空文件，可能是损坏的缓存
+                    @unlink($file);
+                }
+            }
+        } catch (\Throwable $e) {
+            // 记录但不中断
+            EmergencyRenderer::logError($e, 'CacheConfigValidation');
+        }
     }
 
     /**

@@ -4,6 +4,7 @@ namespace zxf\Trace;
 
 use Closure;
 use Illuminate\Foundation\Configuration\Exceptions;
+use zxf\Trace\EmergencyRenderer;
 
 /**
  * Laravel 11+ 自定义异常处理配置类
@@ -214,11 +215,13 @@ class CustomExceptionHandler
             return $trace->respView($trace::$message, $trace::$code);
 
         } catch (\Throwable $err) {
-            // 处理失败时记录日志但不中断流程
-            if (config('app.debug', false)) {
-                error_log('[Trace] Exception render error: ' . $err->getMessage());
-            }
-            return null;
+            // 如果 Trace 处理失败，使用兜底渲染器
+            EmergencyRenderer::logError($err, 'CustomExceptionHandler::handleExceptionRender');
+
+            // 使用紧急渲染器作为最后手段
+            $code = $e->getCode() >= 100 && $e->getCode() < 600 ? $e->getCode() : 500;
+            EmergencyRenderer::render($e, $code);
+            exit(1);
         }
     }
 

@@ -17,6 +17,40 @@ return [
     'enabled' => (bool) env('APP_DEBUG', false),
 
     /**
+     * 兜底错误处理配置
+     *
+     * 用于配置在 Laravel 框架无法正常工作时（如引导阶段异常、致命错误）的错误处理行为
+     */
+    'fallback_handler' => [
+        // 是否启用兜底错误处理器
+        'enabled' => true,
+
+        // 是否在调试模式下也启用兜底处理器（通常只在生产环境启用）
+        'force_enabled' => false,
+
+        // 是否在响应中包含请求ID（便于追踪问题）
+        'include_request_id' => true,
+
+        // 是否在响应中包含时间戳
+        'include_timestamp' => true,
+
+        // 自定义错误页面路径（留空使用默认模板）
+        'custom_error_view' => '',
+
+        // 紧急日志配置
+        'emergency_log' => [
+            // 是否启用紧急日志
+            'enabled' => true,
+
+            // 日志存储路径（相对于 storage_path）
+            'path' => 'logs/emergency',
+
+            // 日志文件保留天数
+            'retention_days' => 7,
+        ],
+    ],
+
+    /**
      * 使用自定义处理的命名空间
      *
      * 例如在多模块项目中（如 Modules），可以设置此值来自定义模块命名空间。
