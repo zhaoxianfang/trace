@@ -18,7 +18,6 @@ use ReflectionFunction;
 use ReflectionMethod;
 use Throwable;
 use zxf\Trace\Traits\AppEndTrait;
-use zxf\Trace\Traits\ExceptionCodeTrait;
 use zxf\Trace\Traits\ExceptionCustomCallbackTrait;
 use zxf\Trace\Traits\ExceptionShowDebugHtmlTrait;
 use zxf\Trace\Traits\ExceptionTrait;
@@ -49,10 +48,15 @@ use zxf\Trace\Traits\TraceResponseTrait;
 class Handle
 {
     use AppEndTrait;
-    use ExceptionCodeTrait;
     use ExceptionCustomCallbackTrait;
-    use ExceptionShowDebugHtmlTrait;
-    use ExceptionTrait;
+    // 解决 generateRequestId 方法冲突：ExceptionShowDebugHtmlTrait 和 ExceptionNotifyTrait 都有此方法
+    // ExceptionTrait 内部已经使用了 ExceptionCodeTrait 和 ExceptionNotifyTrait
+    use ExceptionTrait {
+        ExceptionTrait::generateRequestId insteadof ExceptionShowDebugHtmlTrait;
+    }
+    use ExceptionShowDebugHtmlTrait {
+        ExceptionShowDebugHtmlTrait::generateRequestId as generateRequestIdFromHtmlTrait;
+    }
     use TraceResponseTrait;
 
     /**

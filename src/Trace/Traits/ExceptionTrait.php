@@ -13,8 +13,13 @@ use Throwable;
  */
 trait ExceptionTrait
 {
-    use ExceptionCodeTrait;
-    use ExceptionNotifyTrait;
+    // 解决 generateRequestId 方法冲突：ExceptionCodeTrait 和 ExceptionNotifyTrait 都有此方法
+    use ExceptionCodeTrait {
+        ExceptionCodeTrait::generateRequestId insteadof ExceptionNotifyTrait;
+    }
+    use ExceptionNotifyTrait {
+        ExceptionNotifyTrait::generateRequestId as generateRequestIdFromNotifyTrait;
+    }
 
     // 可使外部调用的处理好的错误码
     public static int $code = 500;

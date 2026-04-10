@@ -150,14 +150,14 @@ trait ExceptionCodeTrait
                 return response()->view($customView, [
                     'code' => $code,
                     'message' => $message,
-                    'title' => $this->getCodeMeg($code),
-                    'isDebug' => config('app.debug', false),
-                    'requestId' => $this->getRequestId(),
-                    'timestamp' => now()->format('Y-m-d H:i:s'),
-                ], $code);
-            }
+            'title' => $this->getCodeMeg($code),
+                'isDebug' => config('app.debug', false),
+                'requestId' => $this->generateRequestId(),
+                'timestamp' => now()->format('Y-m-d H:i:s'),
+            ], $code);
+        }
 
-            // 2. 检查应用标准错误视图
+        // 2. 检查应用标准错误视图
             if ($view->exists("errors/{$code}")) {
                 return response()->view("errors/{$code}", [
                     'code' => $code,
@@ -181,24 +181,24 @@ trait ExceptionCodeTrait
                 return response()->view('trace::errors.error', [
                     'code' => $code,
                     'message' => $message,
-                    'isDebug' => config('app.debug', false),
-                    'requestId' => $this->getRequestId(),
-                    'timestamp' => now()->format('Y-m-d H:i:s'),
-                ], $code);
-            }
+                'isDebug' => config('app.debug', false),
+                'requestId' => $this->generateRequestId(),
+                'timestamp' => now()->format('Y-m-d H:i:s'),
+            ], $code);
+        }
 
-            // 4. 检查 Trace 包通用错误视图（向后兼容）
+        // 4. 检查 Trace 包通用错误视图（向后兼容）
             if ($view->exists('trace::errors.generic')) {
                 return response()->view('trace::errors.generic', [
                     'code' => $code,
                     'message' => $message,
-                    'isDebug' => config('app.debug', false),
-                    'requestId' => $this->getRequestId(),
-                    'timestamp' => now()->format('Y-m-d H:i:s'),
-                ], $code);
-            }
+                'isDebug' => config('app.debug', false),
+                'requestId' => $this->generateRequestId(),
+                'timestamp' => now()->format('Y-m-d H:i:s'),
+            ], $code);
+        }
 
-            // 5. 使用内置的错误页面模板（最终兜底）
+        // 5. 使用内置的错误页面模板（最终兜底）
             return $this->renderFallbackHtml($message, $code);
         } catch (\Throwable $e) {
             // 任何视图渲染错误都降级到内置模板
@@ -218,7 +218,7 @@ trait ExceptionCodeTrait
         $title = $this->getErrorTitle($code);
         $emoji = $this->getErrorEmoji($code);
         $isDebug = config('app.debug', false);
-        $requestId = $this->getRequestId();
+        $requestId = $this->generateRequestId();
 
         // 尝试使用 trace::errors.generic 视图
         try {
@@ -301,9 +301,12 @@ trait ExceptionCodeTrait
     }
 
     /**
-     * 获取请求ID
+     * 生成请求 ID
+     * 
+     * 注意：此方法与 ExceptionNotifyTrait、ExceptionShowDebugHtmlTrait 中的 generateRequestId 方法
+     * 功能相同但命名不同。在 Handle 类中使用 ExceptionTrait 时，会通过 insteadof 解决冲突。
      */
-    private function getRequestId(): string
+    private function generateRequestId(): string
     {
         try {
             if (function_exists('request') && request()) {

@@ -1,7 +1,5 @@
 <?php
 
-use zxf\Trace\Handle;
-
 if (! function_exists('is_enable_trace')) {
     /**
      * 判断是否开启 trace 调试
@@ -58,7 +56,7 @@ if (! function_exists('trace')) {
      */
     function trace(mixed ...$args): void
     {
-        /** @var $trace Handle */
+        /** @var \zxf\Trace\Handle $trace */
         $trace = app('trace');
         foreach ($args as $value) {
             $trace->addMessage($value, 'debug');

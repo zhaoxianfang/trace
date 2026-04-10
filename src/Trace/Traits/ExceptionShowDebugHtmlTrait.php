@@ -3,7 +3,6 @@
 namespace zxf\Trace\Traits;
 
 use Illuminate\Http\Request;
-use zxf\Trace\Handle;
 
 /**
  * 异常调试 HTML 输出 Trait
@@ -136,7 +135,7 @@ trait ExceptionShowDebugHtmlTrait
     private function attachTraceToResponse($resp)
     {
         try {
-            /** @var Handle $trace */
+            /** @var \zxf\Trace\Handle $trace */
             $trace = app('trace');
             $request = app(Request::class);
             return $trace->renderTraceStyleAndScript($request, $resp)->send();

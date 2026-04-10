@@ -132,7 +132,7 @@ class CustomExceptionHandler
         // 使用容器解析事件监听，等待服务就绪
         $exceptions->render(function (\Throwable $e, $request) {
             if (app()->bound('trace')) {
-                /** @var Handle $trace */
+                /** @var \zxf\Trace\Handle $trace */
                 $trace = app('trace');
                 return self::handleExceptionRender($request, $e, $trace);
             }
@@ -154,7 +154,7 @@ class CustomExceptionHandler
             return;
         }
 
-        /** @var Handle $trace */
+        /** @var \zxf\Trace\Handle $trace */
         $trace = app('trace');
 
         // 更新存储的配置

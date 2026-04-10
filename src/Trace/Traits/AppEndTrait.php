@@ -3,7 +3,6 @@
 namespace zxf\Trace\Traits;
 
 use Illuminate\Support\Facades\Response;
-use zxf\Trace\Handle;
 
 /**
  * 应用结束时的处理 Trait
@@ -60,7 +59,7 @@ trait AppEndTrait
                 // 创建 Laravel 的 Response 对象
                 $response = Response::make($output, 200);
 
-                /** @var Handle $trace */
+                /** @var \zxf\Trace\Handle $trace */
                 $trace = app('trace');
 
                 // 只在 trace 服务可用时执行
