@@ -145,7 +145,7 @@ trait ExceptionShowDebugHtmlTrait
     }
 
     /**
-     * 渲染紧急视图（当 Blade 视图不可用时）
+     * 渲染错误视图（当 Blade 视图不可用时）
      *
      * @param string $title
      * @param array $list
@@ -153,18 +153,19 @@ trait ExceptionShowDebugHtmlTrait
      * @param bool $showTrace
      * @return \Illuminate\Http\Response
      */
-    private function renderEmergencyView(string $title, array $list, int $statusCode, bool $showTrace)
+    private function renderErrorView(string $title, array $list, int $statusCode, bool $showTrace)
     {
-        // 尝试使用 emergency 视图
+        // 尝试使用 error 视图
         try {
             if (function_exists('view') && app()->bound('view')) {
                 $view = app('view');
-                if ($view->exists('trace::emergency')) {
-                    $html = $view->make('trace::emergency', [
+                if ($view->exists('trace::error')) {
+                    $html = $view->make('trace::error', [
                         'code' => $statusCode,
                         'title' => $title,
                         'message' => '系统调试信息已收集，请查看详细内容',
-                        'showDebug' => true,
+                        'list' => $list,
+                        'isDebug' => true,
                         'requestId' => $this->generateRequestId(),
                         'timestamp' => date('Y-m-d H:i:s'),
                     ])->render();

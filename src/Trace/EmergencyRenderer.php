@@ -266,7 +266,7 @@ class EmergencyRenderer
             }
 
             // 检查视图是否存在
-            if (!$view->exists('trace::emergency')) {
+            if (!$view->exists('trace::error')) {
                 return false;
             }
 
@@ -275,11 +275,9 @@ class EmergencyRenderer
                 'code' => $code,
                 'title' => self::getErrorTitle($code),
                 'message' => $publicMessage,
-                'emoji' => self::getErrorEmoji($code),
                 'requestId' => self::generateRequestId(),
                 'timestamp' => date('Y-m-d H:i:s'),
-                'showDebug' => $isDebug,
-                'showTrace' => $isDebug,
+                'isDebug' => $isDebug,
             ];
 
             // 如果有异常对象，添加到视图数据
@@ -329,7 +327,7 @@ class EmergencyRenderer
             }
 
             // 渲染视图
-            echo $view->make('trace::emergency', $viewData)->render();
+            echo $view->make('trace::error', $viewData)->render();
             return true;
 
         } catch (\Throwable $e) {

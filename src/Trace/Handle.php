@@ -708,7 +708,7 @@ class Handle
     private function getEmptyTips(?string $tabName = ''): array
     {
         [$message, $tips] = match (strtolower($tabName)) {
-            'messages' => ['暂无调试内容', '使用 trace(mixed ...$args) 函数进行调试'],
+            'messages' => ['暂无调试内容', '可使用 trace(mixed ...$args) 函数进行调试'],
             'sql' => ['暂无sql查询', ''],
             'view' => ['没有加载视图', ''],
             'exception' => ['暂无异常信息', ''],
@@ -720,7 +720,7 @@ class Handle
             return [
                 'message' => $message,
                 'tips' => $tips,
-                'has_html' => true,
+                'is_empty_tips' => true,
             ];
         }
 

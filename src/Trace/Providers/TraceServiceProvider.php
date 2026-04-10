@@ -12,6 +12,7 @@ use zxf\Trace\Middleware\TraceMiddleware;
 use zxf\Trace\TraceExceptionHandler;
 use zxf\Trace\FallbackExceptionHandler;
 use zxf\Trace\EmergencyRenderer;
+use zxf\Trace\ViewGuard;
 
 /**
  * Trace 服务提供者
@@ -62,6 +63,9 @@ class TraceServiceProvider extends ServiceProvider
 
         // 标记 Laravel 已启动完成
         FallbackExceptionHandler::markLaravelBooted();
+
+        // 注册视图保护（确保内部视图只能被 Trace 包访问）
+        ViewGuard::register();
     }
 
     /**

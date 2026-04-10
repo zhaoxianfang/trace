@@ -15,6 +15,7 @@
 - 💥 **极端情况保护** - 文件缓存损坏、内存耗尽、PHP 致命错误等极端情况下的优雅降级
 - 🎨 **现代化界面** - 响应式设计，适配移动端和桌面端
 - ⚡ **零配置开箱即用** - 无需复杂配置，开箱即用
+- 🎭 **精美视图模板** - 提供统一、美观的错误和调试页面模板
 
 ## 配置定义【可选】
 
@@ -291,6 +292,54 @@ Trace 包提供了精美的错误页面模板，无需任何配置即可使用�
 - 503 - 服务不可用
 - 通用错误页面（其他状态码）
 
+#### 视图使用指南
+
+Trace 包提供以下视图模板：
+
+| 视图名称 | 用途 | 说明 |
+|---------|------|------|
+| `trace::error` | 错误页面 | 展示 HTTP 错误信息，支持调试模式 |
+| `trace::debug` | 调试页面 | 展示调试信息列表 |
+| `trace::panel` | 调试面板 | **仅限内部使用**，页面底部调试工具栏 |
+
+**使用示例：**
+
+```php
+// 在控制器中返回错误页面
+return response()->view('trace::error', [
+    'code' => 404,
+    'title' => '页面未找到',
+    'message' => '您访问的页面不存在',
+    'isDebug' => config('app.debug'),
+]);
+
+// 展示调试信息
+return response()->view('trace::debug', [
+    'title' => '调试信息',
+    'list' => [
+        ['type' => 'text', 'label' => '用户名', 'value' => 'admin'],
+        ['type' => 'code', 'label' => '配置', 'value' => json_encode($config)],
+    ],
+]);
+```
+
+**视图数据参数：**
+
+`trace::error` 视图接受以下参数：
+- `code` - HTTP 状态码 (默认: 500)
+- `title` - 错误标题 (默认: 'Error')
+- `message` - 错误消息 (默认: 'An error occurred')
+- `isDebug` - 是否调试模式 (默认: false)
+- `exception` - 异常对象 (可选，调试模式显示)
+- `list` - 调试信息列表 (可选，调试模式显示)
+- `requestId` - 请求 ID (可选)
+- `timestamp` - 时间戳 (可选)
+
+`trace::debug` 视图接受以下参数：
+- `title` - 页面标题 (默认: 'Debug')
+- `list` - 调试信息列表，每项包含 `type`, `label`, `value`
+  - `type` 可选值: `text`, `code`, `code_html`, `debug_file`
+
 #### 自定义 Trace 包视图
 
 如果需要自定义 Trace 包的错误页面，可以发布视图文件：
@@ -306,16 +355,16 @@ php artisan vendor:publish --provider="zxf\Trace\Providers\TraceServiceProvider"
 Trace 包注册了 `trace::` 视图命名空间，可以直接使用：
 
 ```blade
-{{-- 使用 Trace 包的布局 --}}
-@extends('trace::layouts.error')
+{{-- 使用 Trace 包的错误页面 --}}
+@extends('trace::error')
 
-@section('content')
-    {{-- 自定义内容 --}}
-@endsection
-
-{{-- 使用统一错误页面 --}}
-@include('trace::errors.error', ['code' => 404])
+{{-- 在视图中包含错误组件 --}}
+@include('trace::error', ['code' => 404, 'message' => '页面不存在'])
 ```
+
+#### 视图访问保护
+
+> **注意：** `trace::panel` 视图为 Trace 包内部专用，外部代码直接调用会抛出异常。如需自定义调试面板外观，请通过 CSS 覆盖样式。
 
 #### 完全自定义错误视图
 
@@ -487,6 +536,7 @@ SQL 分组模式会被缓存，避免每次请求都重新编译正则表达式�
 
 ### 6.1 Laravel 版本
 
+- Laravel 12.x ✅
 - Laravel 11.x ✅
 - Laravel 10.x ✅
 - Laravel 9.x ✅

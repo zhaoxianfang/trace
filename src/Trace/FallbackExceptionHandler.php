@@ -670,34 +670,12 @@ class FallbackExceptionHandler
                     }
                 }
 
-                // 尝试使用 unified 视图
-                if ($view->exists('trace::errors.unified')) {
-                    echo $view->make('trace::errors.unified', [
+                // 尝试使用 error 视图
+                if ($view->exists('trace::error')) {
+                    echo $view->make('trace::error', [
                         'code' => 500,
                         'title' => 'System Error',
                         'message' => $safeMessage,
-                        'mode' => 'minimal',
-                    ])->render();
-                    return;
-                }
-
-                // 尝试使用 minimal 视图
-                if ($view->exists('trace::errors.minimal')) {
-                    echo $view->make('trace::errors.minimal', [
-                        'code' => 500,
-                        'title' => 'System Error',
-                        'message' => $safeMessage,
-                    ])->render();
-                    return;
-                }
-
-                // 尝试使用 emergency 视图
-                if ($view->exists('trace::emergency')) {
-                    echo $view->make('trace::emergency', [
-                        'code' => 500,
-                        'title' => 'System Error',
-                        'message' => $safeMessage,
-                        'emoji' => '💥',
                     ])->render();
                     return;
                 }

@@ -98,7 +98,14 @@ trait TraceResponseTrait
      */
     protected function renderBladePanel(array $trace): string
     {
-        $view = view('trace::trace-panel', ['trace' => $trace]);
+        // 使用新的 panel 视图（仅限内部使用）
+        $view = view('trace::panel', [
+            'trace' => $trace,
+            'tabs' => $trace['tabs'] ?? [],
+            'badges' => $trace['badges'] ?? [],
+            'contents' => $trace['contents'] ?? [],
+            'performance' => $trace['performance'] ?? [],
+        ]);
 
         return $view->render();
     }
@@ -181,11 +188,11 @@ HTML;
             return $this->renderDynamicSqlGroup($item);
         }
 
-        // 带有 HTML 提示的空状态
-        if (is_array($item) && isset($item['has_html']) && $item['has_html']) {
+        // 空状态提示（如 Messages 标签无内容时）
+        if (is_array($item) && isset($item['is_empty_tips']) && $item['is_empty_tips']) {
             $message = $this->escapeHtml($item['message'] ?? '');
             $tips = $this->escapeHtml($item['tips'] ?? '');
-            return "<li><span class='json-label'>{$message}</span><span class='json-string-content' style=\"font-size: 12px; color: #aaa;\">提示: {$tips}</span></li>";
+            return "<li style='text-align: center; padding: 30px 20px;'><div style='color: #a0aec0; font-size: 14px; margin-bottom: 8px;'>{$message}</div><div style='color: #718096; font-size: 12px;'>{$tips}</div></li>";
         }
 
         // 带有原始 HTML 的内容（如异常文件链接）
@@ -226,7 +233,7 @@ HTML;
                 $html .= "<div class='{$class}'>{$typeName}:{$className}</div>";
             }
         } else {
-            $diffKeys = array_diff(array_keys($item), ['label', 'right', 'has_html', 'message', 'tips', 'raw_html', 'content']);
+            $diffKeys = array_diff(array_keys($item), ['label', 'right', 'has_html', 'message', 'tips', 'raw_html', 'content', 'is_empty_tips']);
             if (!empty($diffKeys)) {
                 $jsonString = $this->escapeHtml(json_encode($item, JSON_UNESCAPED_UNICODE));
                 $html .= "<div class=\"json-arrow-pre-wrapper\"><span class=\"json-arrow\" onclick=\"toggleJson(this)\" role=\"button\" tabindex=\"0\" aria-expanded=\"false\">▶</span><pre class=\"json\">{$jsonString}</pre></div>";

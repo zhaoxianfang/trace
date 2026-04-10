@@ -123,9 +123,8 @@ trait ExceptionCodeTrait
      * 视图查找优先级：
      * 1. 用户自定义视图 (config trace.fallback_handler.custom_error_view)
      * 2. 应用标准错误视图 (resources/views/errors/{$code})
-     * 3. Trace 包特定状态码视图 (trace::errors.{$code})
-     * 4. Trace 包通用错误视图 (trace::errors.generic)
-     * 5. 内置 HTML 模板（兜底）
+     * 3. Trace 包统一错误视图 (trace::error)
+     * 4. 内置 HTML 模板（兜底）
      */
     public function respView($message = '出错啦!', $code = 500)
     {
@@ -150,14 +149,14 @@ trait ExceptionCodeTrait
                 return response()->view($customView, [
                     'code' => $code,
                     'message' => $message,
-            'title' => $this->getCodeMeg($code),
-                'isDebug' => config('app.debug', false),
-                'requestId' => $this->generateRequestId(),
-                'timestamp' => now()->format('Y-m-d H:i:s'),
-            ], $code);
-        }
+                    'title' => $this->getCodeMeg($code),
+                    'isDebug' => config('app.debug', false),
+                    'requestId' => $this->generateRequestId(),
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                ], $code);
+            }
 
-        // 2. 检查应用标准错误视图
+            // 2. 检查应用标准错误视图
             if ($view->exists("errors/{$code}")) {
                 return response()->view("errors/{$code}", [
                     'code' => $code,
@@ -177,28 +176,18 @@ trait ExceptionCodeTrait
             }
 
             // 3. 检查 Trace 包统一错误视图
-            if ($view->exists('trace::errors.error')) {
-                return response()->view('trace::errors.error', [
+            if ($view->exists('trace::error')) {
+                return response()->view('trace::error', [
                     'code' => $code,
                     'message' => $message,
-                'isDebug' => config('app.debug', false),
-                'requestId' => $this->generateRequestId(),
-                'timestamp' => now()->format('Y-m-d H:i:s'),
-            ], $code);
-        }
+                    'title' => $this->getCodeMeg($code),
+                    'isDebug' => config('app.debug', false),
+                    'requestId' => $this->generateRequestId(),
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                ], $code);
+            }
 
-        // 4. 检查 Trace 包通用错误视图（向后兼容）
-            if ($view->exists('trace::errors.generic')) {
-                return response()->view('trace::errors.generic', [
-                    'code' => $code,
-                    'message' => $message,
-                'isDebug' => config('app.debug', false),
-                'requestId' => $this->generateRequestId(),
-                'timestamp' => now()->format('Y-m-d H:i:s'),
-            ], $code);
-        }
-
-        // 5. 使用内置的错误页面模板（最终兜底）
+            // 4. 使用内置的错误页面模板（最终兜底）
             return $this->renderFallbackHtml($message, $code);
         } catch (\Throwable $e) {
             // 任何视图渲染错误都降级到内置模板
@@ -220,17 +209,16 @@ trait ExceptionCodeTrait
         $isDebug = config('app.debug', false);
         $requestId = $this->generateRequestId();
 
-        // 尝试使用 trace::errors.generic 视图
+        // 尝试使用 trace::error 视图
         try {
             if (function_exists('view') && app()->bound('view')) {
                 $view = app('view');
                 
-                if ($view->exists('trace::errors.generic')) {
-                    return response()->view('trace::errors.generic', [
+                if ($view->exists('trace::error')) {
+                    return response()->view('trace::error', [
                         'code' => $code,
                         'message' => $message,
                         'title' => $title,
-                        'emoji' => $emoji,
                         'isDebug' => $isDebug,
                         'requestId' => $requestId,
                         'timestamp' => now()->format('Y-m-d H:i:s'),
@@ -238,35 +226,49 @@ trait ExceptionCodeTrait
                 }
             }
         } catch (\Throwable $e) {
-            // 视图渲染失败，降级到内置 HTML
+            // 视图渲染失败，降级到内联模板
         }
 
-        // 尝试使用 trace::emergency 视图
-        try {
-            if (function_exists('view') && app()->bound('view')) {
-                $view = app('view');
-                if ($view->exists('trace::emergency')) {
-                    return response()->view('trace::emergency', [
-                        'code' => $code,
-                        'title' => $title,
-                        'message' => $message,
-                        'emoji' => $emoji,
-                        'showDebug' => $isDebug,
-                        'requestId' => $requestId,
-                        'timestamp' => now()->format('Y-m-d H:i:s'),
-                    ], $code);
-                }
-            }
-        } catch (\Throwable $e) {
-            // 视图渲染失败，降级到最小化视图
-        }
+        // 最终兜底：内联 HTML
+        return $this->renderInlineFallback($message, $code, $title);
+    }
 
-        // 最终兜底：使用最小化错误视图
-        return response()->view('trace::errors.minimal', [
-            'code' => $code,
-            'title' => $title,
-            'message' => $message,
-        ], $code);
+    /**
+     * 渲染内联兜底 HTML
+     */
+    private function renderInlineFallback(string $message, int $code, string $title): \Illuminate\Http\Response
+    {
+        $safeMessage = htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+        
+        $html = <<<HTML
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{$title} - {$code}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .container { background: rgba(255,255,255,0.98); border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 500px; width: 100%; padding: 40px; text-align: center; }
+        .code { font-size: 72px; font-weight: bold; color: #e53e3e; margin-bottom: 15px; }
+        .title { font-size: 22px; color: #2d3748; margin-bottom: 15px; }
+        .message { font-size: 15px; color: #718096; margin-bottom: 25px; line-height: 1.6; }
+        .btn { display: inline-block; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-size: 14px; background: #667eea; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="code">{$code}</div>
+        <h1 class="title">{$title}</h1>
+        <p class="message">{$safeMessage}</p>
+        <a href="/" class="btn">返回首页</a>
+    </div>
+</body>
+</html>
+HTML;
+
+        return response($html, $code)->header('Content-Type', 'text/html; charset=utf-8');
     }
 
     /**
