@@ -223,7 +223,7 @@ class Handle
      * 监听模型事件
      *
      * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
-     * 只监听 CURD 操作（创建、更新、删除），不包括 retrieved 等查询操作
+     * 监听 CURD 操作（创建、更新、删除）和数据查询操作
      */
     public function listenModelEvent(): void
     {
@@ -237,9 +237,8 @@ class Handle
             return;
         }
 
-        // 只监听 CURD 相关事件（创建、更新、删除操作）
-        // 不包括：restoring(恢复中), restored(已恢复), replicating(复制), saving(保存中,在creating/updating之前触发)
-        $curdEvents = [
+        // 监听模型相关事件
+        $modelEvents = [
             'retrieved', // 数据查询
             'creating',  // 正在创建
             'created',   // 创建完成
@@ -247,9 +246,11 @@ class Handle
             'updated',   // 更新完成
             'deleting',  // 正在删除
             'deleted',   // 删除完成
+            'saving',    // 保存中
+            'saved',     // 保存完成
         ];
 
-        foreach ($curdEvents as $event) {
+        foreach ($modelEvents as $event) {
             try {
                 Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
                     // 只在当前请求 ID 匹配时才记录
@@ -615,12 +616,21 @@ class Handle
             $line = self::$content['line:'] ?? 0;
             $code = self::$content['code:'] ?? 500;
             $message = self::$message;
+            $exceptionContent = $this->getExceptionContent(self::$errObj);
 
+            $editor = config('trace.editor') ?? 'phpstorm';
             $exception = [
                 'message' => $message,
                 'line' => $line,
-                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$this->getExceptionContent(self::$errObj).'</code></pre>',
-                'file' => '<span class="json-label"><a href="'.(config('trace.editor') ?? 'phpstorm').'://open?file='.urlencode($fileName).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>',
+                // 使用 raw_html 标记，告诉视图这是安全的 HTML
+                'exception' => [
+                    'raw_html' => true,
+                    'content' => $exceptionContent,
+                ],
+                'file' => [
+                    'raw_html' => true,
+                    'content' => '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($fileName).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>',
+                ],
                 'code' => $code,
             ];
         }
@@ -634,8 +644,15 @@ class Handle
             $exception = [
                 'message' => $exceptionObj->getMessage(),
                 'line' => $exceptionObj->getLine(),
-                'exception' => '<pre class="show" style="line-height: 14px;"><code>'.$exceptionString.'</code></pre>',
-                'file' => '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($exceptionObj->getFile()).'&amp;line='.$exceptionObj->getLine().'" class="phpdebugbar-link">'.($fileName.'#'.$exceptionObj->getLine()).'</a></span>',
+                // 使用 raw_html 标记，告诉视图这是安全的 HTML
+                'exception' => [
+                    'raw_html' => true,
+                    'content' => $exceptionString,
+                ],
+                'file' => [
+                    'raw_html' => true,
+                    'content' => '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($exceptionObj->getFile()).'&amp;line='.$exceptionObj->getLine().'" class="phpdebugbar-link">'.($fileName.'#'.$exceptionObj->getLine()).'</a></span>',
+                ],
                 'code' => $exceptionObj->getCode(),
             ];
         }
@@ -697,7 +714,17 @@ class Handle
             'exception' => ['暂无异常信息', ''],
             default => ['暂无内容', ''],
         };
-        return [$message.(!empty($tips)? ' <span style="font-size: 12px;color: #aaa;">提示: '.$tips.'</span>' : '') ];
+
+        // 返回数组格式，视图层会使用 {!! !!} 渲染 HTML
+        if (! empty($tips)) {
+            return [
+                'message' => $message,
+                'tips' => $tips,
+                'has_html' => true,
+            ];
+        }
+
+        return [$message];
     }
 
     /**

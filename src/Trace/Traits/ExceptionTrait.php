@@ -270,6 +270,7 @@ trait ExceptionTrait
      * 获取异常代码片段
      *
      * 注意：添加异常处理，确保文件操作安全
+     * 注意：返回的 HTML 已经过安全处理，可直接在视图中使用 {!! !!} 渲染
      *
      * @return false|string
      */
@@ -323,12 +324,13 @@ trait ExceptionTrait
                     if (strlen($line) > 200) {
                         $line = substr($line, 0, 200) . "... [TRUNCATED]\n";
                     }
-                    // HTML 转义，防止 XSS
+                    // HTML 转义，防止 XSS（保留缩进空格）
                     $escapedLine = htmlspecialchars($line, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    // 保留换行符用于 pre 标签显示
                     if ($currentLine == $errLine) {
-                        $exceptionCode .= '<span class="error-line-code">'.$currentLine.'|'.$escapedLine.'</span>';
+                        $exceptionCode .= '<span class="error-line-code">'.sprintf('%4d', $currentLine).'| '.$escapedLine.'</span>';
                     } else {
-                        $exceptionCode .= $currentLine.'|'.$escapedLine;
+                        $exceptionCode .= sprintf('%4d', $currentLine).'| '.$escapedLine;
                     }
                 }
                 if ($currentLine > $endLine) {
@@ -356,6 +358,9 @@ trait ExceptionTrait
         $file = $e->getFile();
         $line = $e->getLine();
 
+        // 获取异常代码内容
+        $exceptionContent = $this->getExceptionContent($e);
+
         $content = [
             [
                 'label' => '异常信息',
@@ -373,8 +378,8 @@ trait ExceptionTrait
                 'line' => $line,
             ], [
                 'label' => '异常代码',
-                'type' => 'code',
-                'value' => $this->getExceptionContent($e),
+                'type' => 'code_html',  // 使用 code_html 类型表示已包含 HTML 标签
+                'value' => $exceptionContent,
             ], [
                 'label' => '异常堆栈',
                 'type' => 'code',

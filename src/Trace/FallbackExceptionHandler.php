@@ -13,6 +13,7 @@ use Throwable;
  * 1. 与 Laravel 11+ 兼容 - 不覆盖 Laravel 的处理器，而是作为补充
  * 2. 只在极端情况下介入 - 当 Laravel 处理器无法工作时才生效
  * 3. 协作而非替换 - 保存原始处理器，必要时调用
+ * 4. 多级降级 - 从最优方案逐步降级到最终兜底方案
  *
  * 处理场景：
  * 1. bootstrap/app.php 或配置加载异常（Laravel 未启动完成）
@@ -21,6 +22,8 @@ use Throwable;
  * 4. PHP 致命错误（Fatal Error）
  * 5. 内存耗尽（Out of Memory）
  * 6. 编译错误（Compile Error）
+ * 7. 任意 composer 包引发的异常
+ * 8. PHP 8.2+ 新增错误类型
  */
 class FallbackExceptionHandler
 {
@@ -50,6 +53,11 @@ class FallbackExceptionHandler
     private static bool $laravelBooted = false;
 
     /**
+     * 内存阈值（字节），低于此值时简化处理
+     */
+    private static int $memoryThreshold = 5242880; // 5MB
+
+    /**
      * 注册兜底处理器
      *
      * 注意：此方法在 Laravel 完全启动前调用，因此需要特别小心
@@ -71,6 +79,9 @@ class FallbackExceptionHandler
         // 这是唯一不会与 Laravel 冲突的注册方式
         register_shutdown_function([self::class, 'handleShutdown']);
 
+        // 注册错误处理器（捕获警告和通知）
+        set_error_handler([self::class, 'handleError']);
+
         self::$registered = true;
     }
 
@@ -84,6 +95,30 @@ class FallbackExceptionHandler
     public static function markLaravelBooted(): void
     {
         self::$laravelBooted = true;
+    }
+
+    /**
+     * 错误处理器 - 捕获非致命错误
+     *
+     * @param int $severity 错误级别
+     * @param string $message 错误消息
+     * @param string $file 文件路径
+     * @param int $line 行号
+     * @return bool 是否已处理
+     */
+    public static function handleError(int $severity, string $message, string $file, int $line): bool
+    {
+        // 只处理特定类型的错误
+        if (!in_array($severity, [E_WARNING, E_NOTICE, E_USER_WARNING, E_USER_NOTICE], true)) {
+            return false; // 让 PHP 继续处理其他错误
+        }
+
+        // 在调试模式下记录警告
+        if (self::isDebugMode()) {
+            EmergencyRenderer::logError("[Warning] {$message} in {$file}:{$line}", 'ErrorHandler');
+        }
+
+        return true; // 表示已处理
     }
 
     /**
@@ -118,6 +153,9 @@ class FallbackExceptionHandler
             return;
         }
 
+        // 检查内存使用情况
+        $lowMemory = self::isLowMemory();
+
         self::$isHandling = true;
         self::$handledCount++;
 
@@ -130,19 +168,25 @@ class FallbackExceptionHandler
                 $error['line']
             );
 
-            // 记录日志
-            EmergencyRenderer::logError($exception, 'Fatal Error Handler');
+            // 记录日志（在低内存模式下简化）
+            if (!$lowMemory) {
+                EmergencyRenderer::logError($exception, 'Fatal Error Handler');
+            }
 
-            // 尝试使用 Trace 处理器（如果可用）
-            if (self::canUseTraceHandler()) {
+            // 尝试使用 Trace 处理器（如果可用且内存充足）
+            if (!$lowMemory && self::canUseTraceHandler()) {
                 self::handleWithTrace($exception);
             } else {
-                // 使用紧急渲染器
+                // 使用紧急渲染器（低内存模式下使用简化渲染）
                 $code = self::errorTypeToHttpCode($error['type']);
-                EmergencyRenderer::render($exception, $code);
+                if ($lowMemory) {
+                    self::renderMinimalError($exception, $code);
+                } else {
+                    EmergencyRenderer::render($exception, $code);
+                }
             }
         } catch (Throwable $e) {
-            // 如果连渲染都失败了
+            // 如果连渲染都失败了，使用最后兜底方案
             self::lastResortOutput($e->getMessage());
         } finally {
             self::$isHandling = false;
@@ -190,6 +234,115 @@ class FallbackExceptionHandler
         }
 
         exit(1);
+    }
+
+    /**
+     * 处理任意异常（供外部调用）
+     *
+     * @param Throwable $exception
+     * @return void
+     */
+    public static function handleException(Throwable $exception): void
+    {
+        // 防止递归
+        if (self::$isHandling || self::$handledCount >= self::$maxHandleCount) {
+            return;
+        }
+
+        self::$isHandling = true;
+        self::$handledCount++;
+
+        try {
+            // 记录日志
+            EmergencyRenderer::logError($exception, 'Exception Handler');
+
+            // 检查内存
+            $lowMemory = self::isLowMemory();
+
+            // 尝试使用 Trace 处理器
+            if (!$lowMemory && self::canUseTraceHandler()) {
+                self::handleWithTrace($exception);
+            } else {
+                // 使用紧急渲染器
+                $code = self::getHttpCode($exception);
+                if ($lowMemory) {
+                    self::renderMinimalError($exception, $code);
+                } else {
+                    EmergencyRenderer::render($exception, $code);
+                }
+            }
+        } catch (Throwable $e) {
+            // 如果连渲染都失败了
+            self::lastResortOutput($e->getMessage());
+        } finally {
+            self::$isHandling = false;
+        }
+
+        exit(1);
+    }
+
+    /**
+     * 检查内存是否不足
+     *
+     * @return bool
+     */
+    private static function isLowMemory(): bool
+    {
+        try {
+            $memoryLimit = ini_get('memory_limit');
+            if ($memoryLimit === '-1') {
+                return false; // 无限制
+            }
+
+            $memoryLimitBytes = self::parseMemoryLimit($memoryLimit);
+            $currentUsage = memory_get_usage(true);
+            $available = $memoryLimitBytes - $currentUsage;
+
+            return $available < self::$memoryThreshold;
+        } catch (Throwable) {
+            return false; // 默认认为内存充足
+        }
+    }
+
+    /**
+     * 解析内存限制字符串为字节数
+     *
+     * @param string $limit
+     * @return int
+     */
+    private static function parseMemoryLimit(string $limit): int
+    {
+        $limit = trim($limit);
+        $last = strtolower($limit[strlen($limit) - 1]);
+        $value = (int) $limit;
+
+        return match ($last) {
+            'g' => $value * 1024 * 1024 * 1024,
+            'm' => $value * 1024 * 1024,
+            'k' => $value * 1024,
+            default => $value,
+        };
+    }
+
+    /**
+     * 渲染极简错误（低内存模式下）
+     *
+     * @param Throwable $exception
+     * @param int $code
+     * @return void
+     */
+    private static function renderMinimalError(Throwable $exception, int $code): void
+    {
+        if (!headers_sent()) {
+            http_response_code($code);
+            header('Content-Type: text/html; charset=utf-8');
+        }
+
+        $safeMessage = htmlspecialchars($exception->getMessage(), ENT_QUOTES, 'UTF-8');
+        $isDebug = self::isDebugMode();
+
+        // 极简 HTML，占用最少内存
+        echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Error ', $code, '</title><style>body{font-family:system-ui,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px}.box{background:#fff;padding:40px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1);text-align:center;max-width:400px}.code{font-size:48px;font-weight:700;color:#e53e3e;margin-bottom:10px}.msg{color:#666;margin:20px 0}.btn{background:#667eea;color:#fff;padding:10px 20px;text-decoration:none;border-radius:4px;display:inline-block}</style></head><body><div class="box"><div class="code">', $code, '</div><h2>System Error</h2><p class="msg">', $safeMessage, '</p><a href="/" class="btn">返回首页</a></div></body></html>';
     }
 
     /**
@@ -311,7 +464,7 @@ class FallbackExceptionHandler
 
             // 获取视图工厂实例
             $view = app('view');
-            
+
             // 检查 trace 命名空间是否已注册
             $hasTraceNamespace = false;
             try {
@@ -329,39 +482,31 @@ class FallbackExceptionHandler
                 }
             }
 
-            // 尝试使用 trace 命名空间的统一错误视图
-            if ($view->exists('trace::errors.error')) {
-                $response = response()->view('trace::errors.error', [
-                    'code' => $code,
-                    'message' => $message,
-                    'exception' => $exception,
-                    'isDebug' => self::isDebugMode(),
-                    'requestId' => self::generateRequestId(),
-                    'timestamp' => date('Y-m-d H:i:s'),
-                ], $code);
+            // 按优先级尝试使用不同的视图
+            $viewPriorities = [
+                'trace::errors.unified',    // 新的统一视图
+                'trace::errors.error',      // 通用错误视图
+                'trace::errors.generic',    // 兼容旧版本
+                'trace::emergency',         // 紧急视图
+            ];
 
-                // 确保响应被正确发送
-                if (is_object($response) && method_exists($response, 'send')) {
-                    $response->send();
+            foreach ($viewPriorities as $viewName) {
+                if ($view->exists($viewName)) {
+                    $response = response()->view($viewName, [
+                        'code' => $code,
+                        'message' => $message,
+                        'exception' => $exception,
+                        'isDebug' => self::isDebugMode(),
+                        'requestId' => self::generateRequestId(),
+                        'timestamp' => date('Y-m-d H:i:s'),
+                    ], $code);
+
+                    // 确保响应被正确发送
+                    if (is_object($response) && method_exists($response, 'send')) {
+                        $response->send();
+                    }
+                    return $response;
                 }
-                return $response;
-            }
-
-            // 尝试使用通用错误视图（向后兼容）
-            if ($view->exists('trace::errors.generic')) {
-                $response = response()->view('trace::errors.generic', [
-                    'code' => $code,
-                    'message' => $message,
-                    'exception' => $exception,
-                    'isDebug' => self::isDebugMode(),
-                    'requestId' => self::generateRequestId(),
-                    'timestamp' => date('Y-m-d H:i:s'),
-                ], $code);
-
-                if (is_object($response) && method_exists($response, 'send')) {
-                    $response->send();
-                }
-                return $response;
             }
 
             // 降级到 respView
@@ -386,6 +531,14 @@ class FallbackExceptionHandler
      */
     private static function generateRequestId(): string
     {
+        try {
+            // 尝试使用随机字节生成更安全的请求ID
+            if (function_exists('random_bytes')) {
+                return substr(bin2hex(random_bytes(8)), 0, 12);
+            }
+        } catch (Throwable) {
+            // 回退到传统方式
+        }
         return substr(md5(uniqid('', true)), 0, 12);
     }
 
@@ -394,7 +547,21 @@ class FallbackExceptionHandler
      */
     private static function isFatalErrorType(int $type): bool
     {
-        return in_array($type, [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true);
+        // 包含 PHP 8+ 新增的错误类型
+        $fatalTypes = [
+            E_ERROR,
+            E_PARSE,
+            E_CORE_ERROR,
+            E_COMPILE_ERROR,
+            E_USER_ERROR,
+        ];
+
+        // PHP 8.0+ 新增的错误类型
+        if (defined('E_STRICT') && PHP_VERSION_ID >= 80000) {
+            // PHP 8+ 将 E_STRICT 合并到其他错误类型中
+        }
+
+        return in_array($type, $fatalTypes, true);
     }
 
     /**
@@ -403,7 +570,7 @@ class FallbackExceptionHandler
     private static function errorTypeToHttpCode(int $type): int
     {
         return match ($type) {
-            E_PARSE, E_COMPILE_ERROR => 500,
+            E_PARSE, E_COMPILE_ERROR, E_CORE_ERROR => 500,
             default => 500,
         };
     }
@@ -413,16 +580,27 @@ class FallbackExceptionHandler
      */
     private static function getHttpCode(Throwable $exception): int
     {
+        // 检查是否为 HTTP 异常
         if ($exception instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
             return $exception->getStatusCode();
         }
 
+        // 检查异常代码是否在有效范围内
         $code = $exception->getCode();
         if ($code >= 100 && $code < 600) {
             return $code;
         }
 
-        return 500;
+        // 根据异常类型推断状态码
+        $class = get_class($exception);
+        return match (true) {
+            str_contains($class, 'NotFound') => 404,
+            str_contains($class, 'Unauthorized') => 401,
+            str_contains($class, 'Forbidden') => 403,
+            str_contains($class, 'Validation') => 422,
+            str_contains($class, 'MethodNotAllowed') => 405,
+            default => 500,
+        };
     }
 
     /**
@@ -444,6 +622,7 @@ class FallbackExceptionHandler
      */
     private static function isDebugMode(): bool
     {
+        // 多维度检查调试模式
         $debug = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? false;
 
         if (is_string($debug)) {
@@ -489,6 +668,17 @@ class FallbackExceptionHandler
                     } catch (\Throwable $e) {
                         $view->addNamespace('trace', $viewPath);
                     }
+                }
+
+                // 尝试使用 unified 视图
+                if ($view->exists('trace::errors.unified')) {
+                    echo $view->make('trace::errors.unified', [
+                        'code' => 500,
+                        'title' => 'System Error',
+                        'message' => $safeMessage,
+                        'mode' => 'minimal',
+                    ])->render();
+                    return;
                 }
 
                 // 尝试使用 minimal 视图

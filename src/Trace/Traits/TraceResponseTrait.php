@@ -181,6 +181,23 @@ HTML;
             return $this->renderDynamicSqlGroup($item);
         }
 
+        // 带有 HTML 提示的空状态
+        if (is_array($item) && isset($item['has_html']) && $item['has_html']) {
+            $message = $this->escapeHtml($item['message'] ?? '');
+            $tips = $this->escapeHtml($item['tips'] ?? '');
+            return "<li><span class='json-label'>{$message}</span><span class='json-string-content' style=\"font-size: 12px; color: #aaa;\">提示: {$tips}</span></li>";
+        }
+
+        // 带有原始 HTML 的内容（如异常文件链接）
+        if (is_array($item) && isset($item['raw_html']) && $item['raw_html']) {
+            $content = $item['content'];
+            // 如果包含错误行代码高亮，添加样式
+            if (is_string($content) && str_contains($content, 'error-line-code')) {
+                return "<li><pre style='background:#1e1e2e;color:#cdd6f4;padding:15px;border-radius:6px;overflow-x:auto;font-family:Consolas,Monaco,Courier New,monospace;font-size:13px;line-height:1.6;margin:5px 0;'>{$content}</pre></li>";
+            }
+            return "<li>{$content}</li>";
+        }
+
         // Trace 数据类型
         if (is_array($item) && !empty($item['type']) && $item['type'] == 'trace') {
             return $this->renderDynamicTraceItem($item, $editor);
@@ -209,15 +226,10 @@ HTML;
                 $html .= "<div class='{$class}'>{$typeName}:{$className}</div>";
             }
         } else {
-            $diffKeys = array_diff(array_keys($item), ['label', 'right']);
+            $diffKeys = array_diff(array_keys($item), ['label', 'right', 'has_html', 'message', 'tips', 'raw_html', 'content']);
             if (!empty($diffKeys)) {
                 $jsonString = $this->escapeHtml(json_encode($item, JSON_UNESCAPED_UNICODE));
-                $html .= <<<JSON
-<div class="json-arrow-pre-wrapper">
-    <span class="json-arrow" onclick="toggleJson(this)" role="button" tabindex="0" aria-expanded="false">▶</span>
-    <pre class="json">{$jsonString}</pre>
-</div>
-JSON;
+                $html .= "<div class=\"json-arrow-pre-wrapper\"><span class=\"json-arrow\" onclick=\"toggleJson(this)\" role=\"button\" tabindex=\"0\" aria-expanded=\"false\">▶</span><pre class=\"json\">{$jsonString}</pre></div>";
             } elseif (empty($item)) {
                 $html .= "<span class='json-string-content'>[]</span>";
             }

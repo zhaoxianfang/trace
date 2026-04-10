@@ -239,16 +239,48 @@ class TraceServiceProvider extends ServiceProvider
 
         if ($isLaravel11OrHigher) {
             // Laravel 11+ 使用新的异常处理机制
-            // 仅在控制台或测试环境注册传统异常处理器
-            // Web 环境通过 bootstrap/app.php 的 withExceptions() 配置
-            if ($this->app->runningInConsole() || $this->app->environment('testing')) {
+            // 检查是否已经通过 bootstrap/app.php 配置了异常处理器
+            $hasCustomExceptionHandler = $this->hasCustomExceptionHandler();
+
+            if (! $hasCustomExceptionHandler) {
+                // 如果没有自定义异常处理器，注册我们的处理器
                 $this->registerLegacyExceptionHandler();
-                self::$exceptionHandlerRegistered = true;
             }
+
+            self::$exceptionHandlerRegistered = true;
         } else {
             // Laravel 10 及以下版本，注册传统异常处理器
             $this->registerLegacyExceptionHandler();
             self::$exceptionHandlerRegistered = true;
+        }
+    }
+
+    /**
+     * 检查是否已经配置了自定义异常处理器
+     *
+     * @return bool
+     */
+    private function hasCustomExceptionHandler(): bool
+    {
+        try {
+            // 获取当前的异常处理器
+            $currentHandler = $this->app->make(ExceptionHandler::class);
+
+            // 如果已经是 TraceExceptionHandler，说明已经注册过
+            if ($currentHandler instanceof \zxf\Trace\TraceExceptionHandler) {
+                return true;
+            }
+
+            // 检查是否是 Laravel 的默认处理器
+            if ($currentHandler instanceof \Illuminate\Foundation\Exceptions\Handler) {
+                return false;
+            }
+
+            // 其他情况认为有自定义处理器
+            return true;
+        } catch (\Throwable $e) {
+            // 如果无法获取异常处理器，认为没有自定义处理器
+            return false;
         }
     }
 
