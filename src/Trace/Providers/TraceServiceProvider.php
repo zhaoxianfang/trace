@@ -49,7 +49,7 @@ class TraceServiceProvider extends ServiceProvider
         // 发布配置文件到项目配置目录
         $this->publishes([
             __DIR__ . '/../../../config/trace.php' => config_path('trace.php'),
-        ], ['trace']);
+        ], ['trace', 'trace-config']);
 
         // 发布视图文件（可选）
         $this->publishes([

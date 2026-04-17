@@ -22,7 +22,7 @@
 发布 `config/trace.php` 配置文件，所有的配置项都可以不定义或者直接不创建配置文件，则会自动使用默认配置项；
 
 ```bash
-php artisan vendor:publish --provider="zxf\Trace\Providers\TraceServiceProvider"
+php artisan vendor:publish --tag=trace-config
 ```
 
 ### 配置选项
