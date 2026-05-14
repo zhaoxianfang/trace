@@ -52,6 +52,22 @@ function _t_crit(string $m): bool {
 /* ═══ 应急渲染（零依赖，纯 echo）═══ */
 function _t_render(int $code, string $badge, string $msg, string $sug='', string $file='', int $line=0): void {
   _t_clean();
+
+  // ★ CLI 模式输出纯文本
+  if (PHP_SAPI === 'cli') {
+    global $_trace_id;
+    $mem = '';
+    try { $u=memory_get_usage(true);$mem=' | Memory: '._t_bytes($u); } catch(\Throwable){}
+    echo "\n\033[1;31m⚡ Trace Error Intercepted\033[0m\n";
+    echo "\033[1;33m  [{$code}] {$badge}\033[0m\n";
+    echo "  Message: {$msg}\n";
+    if (!empty($sug)) echo "  Suggestion: {$sug}\n";
+    if (!empty($file) && _t_dbg()) echo "  File: {$file}:{$line}\n";
+    echo "  PHP: " . PHP_VERSION . "{$mem}\n";
+    echo "  ID: " . $_trace_id . " | " . date('Y-m-d H:i:s') . "\n\n";
+    return;
+  }
+
   if(!headers_sent()){http_response_code($code);header('Content-Type:text/html;charset=utf-8');}
   $b=htmlspecialchars($badge,ENT_QUOTES|ENT_HTML5,'UTF-8');
   $m=htmlspecialchars($msg,ENT_QUOTES|ENT_HTML5,'UTF-8');

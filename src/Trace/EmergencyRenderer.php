@@ -104,6 +104,11 @@ class EmergencyRenderer
      */
     private static function detectFormat(): string
     {
+        // ★ CLI 模式输出纯文本
+        if (PHP_SAPI === 'cli') {
+            return 'text';
+        }
+
         // 检查 Accept 头
         $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
 

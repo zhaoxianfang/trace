@@ -303,6 +303,11 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     protected function renderByContext($request, Throwable $e): Response
     {
+        // ★ CLI 模式输出纯文本
+        if (PHP_SAPI === 'cli') {
+            return $this->trace->respText($this->trace::$message, $this->trace::$code);
+        }
+
         $isAjaxRequest = $request->is('api/*') || ! $request->isMethod('get') || $request->expectsJson();
         $isDebug = config('app.debug') || app()->runningInConsole();
 

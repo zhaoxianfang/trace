@@ -329,9 +329,33 @@ HTML;
      */
     public function respText(string $message, int $code = 500): \Illuminate\Http\Response
     {
-        $content = "Error {$code}: {$message}\n";
+        // CLI 模式添加 ANSI 颜色
+        $isCli = PHP_SAPI === 'cli';
+        $red = $isCli ? "\033[1;31m" : '';
+        $yellow = $isCli ? "\033[1;33m" : '';
+        $cyan = $isCli ? "\033[0;36m" : '';
+        $reset = $isCli ? "\033[0m" : '';
 
-        if (config('app.debug')) {
+        $content = '';
+        if ($isCli) {
+            $content .= "\n{$red}⚡ Trace Error Intercepted{$reset}\n";
+            $content .= "{$yellow}  [{$code}] {$message}{$reset}\n";
+            $content .= "  PHP: " . PHP_VERSION;
+            try { $content .= ' | Memory: ' . size_format(memory_get_usage(true)); } catch (\Throwable $e) {}
+            $content .= "\n";
+        } else {
+            $content = "Error {$code}: {$message}\n";
+        }
+
+        if ($isCli && config('app.debug')) {
+            $content .= "\n{$cyan}Stack Trace:{$reset}\n";
+            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+            foreach ($trace as $i => $t) {
+                $file = $t['file'] ?? 'unknown';
+                $line = $t['line'] ?? 0;
+                $content .= "  #{$i} {$file}:{$line}\n";
+            }
+        } elseif (! $isCli && config('app.debug')) {
             $content .= "\nStack Trace:\n";
             $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
             foreach ($trace as $i => $t) {
@@ -341,6 +365,7 @@ HTML;
             }
         }
 
+        $content .= "\n";
         return response($content, $code)
             ->header('Content-Type', 'text/plain; charset=utf-8');
     }
