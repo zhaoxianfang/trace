@@ -121,6 +121,10 @@ html,body{height:100%;overflow:hidden}
     <h1>{{$tv}}</h1>
     <p class="ms">{{$mv}}</p>
     <div class="ac">
+      @php $cu = config('trace.contact_url', ''); @endphp
+      @if(!empty($cu))
+      <a href="{{$cu}}" class="btn bs" target="_blank"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>联系我们</a>
+      @endif
       <a href="{{url('/')}}" class="btn bp"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>返回首页</a>
       <button onclick="location.reload()" class="btn bs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>刷新</button>
     </div>

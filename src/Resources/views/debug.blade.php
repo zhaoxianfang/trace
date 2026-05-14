@@ -142,6 +142,10 @@ html,body{height:100%}
     </div>
 
     <div class="ac">
+      @php $cu = config('trace.contact_url', ''); @endphp
+      @if(!empty($cu))
+      <a href="{{$cu}}" class="btn bs" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>联系我们</a>
+      @endif
       <a href="{{url('/')}}" class="btn bp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>首页</a>
       <button onclick="history.back()" class="btn bs"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>返回</button>
     </div>

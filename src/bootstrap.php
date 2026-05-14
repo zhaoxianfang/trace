@@ -60,7 +60,13 @@ function _t_render(int $code, string $badge, string $msg, string $sug='', string
   $detail='';
   if($isD) $detail='<div class="d"><strong>文件：</strong>'.htmlspecialchars($file,ENT_QUOTES|ENT_HTML5,'UTF-8').':'.$line.'<br><strong>内存：</strong>'.htmlspecialchars(_t_mem(),ENT_QUOTES|ENT_HTML5,'UTF-8').'<br><strong>PHP：</strong>'.PHP_VERSION.'</div>';
   $sugHtml=$s?'<div class="sg">💡 '.$s.'</div>':'';
+  $cu = $_ENV['TRACE_CONTACT_URL'] ?? $_SERVER['TRACE_CONTACT_URL'] ?? '';
   global $_trace_id;
+  $contactBtn = '';
+  if (!empty($cu)) {
+    $cuSafe = htmlspecialchars($cu, ENT_QUOTES|ENT_HTML5, 'UTF-8');
+    $contactBtn = '<a href="'.$cuSafe.'" class="b2" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>联系我们</a>';
+  }
   echo '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>'.$b.' - '.$code.'</title><style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);background-size:400% 400%;animation:bg 15s ease infinite;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -75,15 +81,18 @@ h1{font-size:22px;color:#fff;margin-bottom:10px;font-weight:700}
 .sg{font-size:13px;color:#68d391;background:rgba(104,211,145,.08);padding:12px 16px;border-radius:0;margin-bottom:15px;text-align:left;border-left:3px solid #68d391;white-space:pre-line;line-height:1.6}
 .d{font-size:12px;color:rgba(255,255,255,.4);margin-bottom:15px;padding:10px 14px;background:rgba(0,0,0,.25);border-radius:12px;text-align:left;line-height:1.7}
 .d strong{color:rgba(255,255,255,.5)}
-.b{display:inline-block;padding:12px 28px;border-radius:14px;text-decoration:none;font-size:14px;font-weight:600;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 4px 20px rgba(102,126,234,.4);transition:all .3s;border:none;cursor:pointer}
+.b,.b2{display:inline-block;padding:12px 28px;border-radius:14px;text-decoration:none;font-size:14px;font-weight:600;transition:all .3s;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.b{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 4px 20px rgba(102,126,234,.4)}
 .b:hover{transform:translateY(-3px);box-shadow:0 8px 30px rgba(102,126,234,.55)}
+.b2{background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.1)}
+.b2:hover{background:rgba(255,255,255,.14);transform:translateY(-2px)}
 .t{margin-top:16px;font-size:11px;color:rgba(255,255,255,.25)}
 </style></head><body><div class="c">
 <div class="s">'.$code.'</div>
 <div class="g">'.$b.'</div>
 <h1>系统错误</h1>
 <p class="p">'.$m.'</p>'.$sugHtml.$detail.'
-<a href="/" class="b">返回首页</a>
+<a href="/" class="b">返回首页</a>'.$contactBtn.'
 <div class="t">ID: '.htmlspecialchars($_trace_id,ENT_QUOTES|ENT_HTML5,'UTF-8').' | '.date('Y-m-d H:i:s').'</div>
 </div></body></html>';
 }
