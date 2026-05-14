@@ -33,6 +33,16 @@ class FallbackExceptionHandler
     private static bool $registered = false;
 
     /**
+     * 原始错误处理器（保存 BootErrorHandler 的处理器以形成调用链）
+     */
+    private static $originalErrorHandler = null;
+
+    /**
+     * 原始异常处理器
+     */
+    private static $originalExceptionHandler = null;
+
+    /**
      * 是否正在处理错误（防止递归）
      */
     private static bool $isHandling = false;
@@ -60,7 +70,11 @@ class FallbackExceptionHandler
     /**
      * 注册兜底处理器
      *
-     * 注意：此方法在 Laravel 完全启动前调用，因此需要特别小心
+     * 注意：
+     * 1. 此方法在 Laravel 完全启动前调用
+     * 2. 由于 BootErrorHandler 已经在 bootstrap.php 中抢先注册了处理器，
+     *    本方法会保存之前的处理器并形成调用链
+     * 3. 调用链: PHP默认 → BootErrorHandler → FallbackExceptionHandler
      *
      * @return void
      */
@@ -75,12 +89,25 @@ class FallbackExceptionHandler
             return;
         }
 
+        // ★ 子进程模式下跳过（bootstrap.php 已有完整处理链）
+        // 使用 global $_trace_child 检查
+        if (isset($GLOBALS['_trace_child']) && $GLOBALS['_trace_child'] === true) {
+            return;
+        }
+
         // 注册 shutdown 函数（用于捕获致命错误）
-        // 这是唯一不会与 Laravel 冲突的注册方式
+        // register_shutdown_function 不会替换已在队列中的函数，
+        // BootErrorHandler 的 shutdown 先注册会先执行
         register_shutdown_function([self::class, 'handleShutdown']);
 
         // 注册错误处理器（捕获警告和通知）
-        set_error_handler([self::class, 'handleError']);
+        // 注意：set_error_handler 会替换之前的处理器，
+        // 但我们可以保存之前的处理器（即 BootErrorHandler 的处理器）
+        // 并在我们的处理器中调用它，形成调用链
+        $previousHandler = set_error_handler([self::class, 'handleError']);
+        if ($previousHandler !== null) {
+            self::$originalErrorHandler = $previousHandler;
+        }
 
         self::$registered = true;
     }
@@ -100,6 +127,11 @@ class FallbackExceptionHandler
     /**
      * 错误处理器 - 捕获非致命错误
      *
+     * 注意：
+     * 1. 形成调用链：BootErrorHandler(原始) → FallbackExceptionHandler
+     * 2. 拒绝只检查 hasIntercepted 就跳过——必须始终调用BootErrorHandler的处理器
+     *    因为 BootErrorHandler 需要检测关键警告（如 resource exhaustion）
+     *
      * @param int $severity 错误级别
      * @param string $message 错误消息
      * @param string $file 文件路径
@@ -108,6 +140,19 @@ class FallbackExceptionHandler
      */
     public static function handleError(int $severity, string $message, string $file, int $line): bool
     {
+        // 始终先调用原始处理器（BootErrorHandler 的处理器）
+        // 注意：不能因为 hasIntercepted 为 true 就跳过，因为 BootErrorHandler
+        // 存储了错误信息不代表它已经处理了全部（例如需要标记关键警告）
+        $originalResult = null;
+        if (self::$originalErrorHandler !== null) {
+            $originalResult = call_user_func(self::$originalErrorHandler, $severity, $message, $file, $line);
+        }
+
+        // 如果 BootErrorHandler 返回 true 表示它已经处理完毕（如关键警告已被标记）
+        if ($originalResult === true) {
+            return true;
+        }
+
         // 只处理特定类型的错误
         if (!in_array($severity, [E_WARNING, E_NOTICE, E_USER_WARNING, E_USER_NOTICE], true)) {
             return false; // 让 PHP 继续处理其他错误
@@ -128,6 +173,7 @@ class FallbackExceptionHandler
      * 只在以下情况介入：
      * 1. 发生了致命错误
      * 2. Laravel 未启动完成，或 Laravel 处理器未能处理错误
+     * 3. BootErrorHandler 未拦截到该错误（BootErrorHandler 已先注册先执行）
      *
      * @return void
      */
@@ -135,6 +181,13 @@ class FallbackExceptionHandler
     {
         // 防止递归
         if (self::$isHandling || self::$handledCount >= self::$maxHandleCount) {
+            return;
+        }
+
+        // 检查 BootErrorHandler 是否已经拦截了此错误
+        // BootErrorHandler 的 shutdown 函数比本处理器先注册，所以先执行
+        // 如果它已经拦截了错误，本处理器不再重复处理
+        if (class_exists(BootErrorHandler::class) && BootErrorHandler::hasIntercepted()) {
             return;
         }
 
