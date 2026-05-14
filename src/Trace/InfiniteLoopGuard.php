@@ -158,9 +158,21 @@ class InfiniteLoopGuard
 
     /**
      * 处理 shutdown（超时/内存错误）
+     *
+     * 注意：此方法与 EarlyInterceptor 和 FallbackExceptionHandler 协调工作：
+     * 1. EarlyInterceptor：在 composer autoload 时先注册，最先捕获 fatal error
+     * 2. FallbackExceptionHandler：在 ServiceProvider 注册，处理 handleShutdown
+     * 3. InfiniteLoopGuard：作为辅助防护层，在此处理未被以上两者捕获的情况
+     *
+     * 如果 EarlyInterceptor 已经捕获了错误，则此处理器不再重复处理
      */
     public static function handleShutdown(): void
     {
+        // 检查早期拦截器是否已经捕获了错误
+        if (class_exists('\\TraceEarly\\EarlyInterceptor') && \TraceEarly\EarlyInterceptor::hasIntercepted()) {
+            return; // 让早期拦截器处理
+        }
+
         $error = error_get_last();
         if ($error === null) {
             return;
@@ -178,19 +190,94 @@ class InfiniteLoopGuard
 
         if ($isMemoryError || $isTimeoutError) {
             $code = $isMemoryError ? 507 : 504;
-            $message = $isMemoryError ? '服务器内存不足' : '请求处理超时';
+            $title = $isMemoryError ? '内存耗尽' : '请求超时';
+            $message = $isMemoryError ? '服务器内存不足，请联系管理员' : '请求处理超时，请稍后重试';
 
-            // 清除输出缓冲
+            // 尝试使用 Blade 视图渲染
+            if (self::tryRenderBladeError($error, $code, $title, $isMemoryError)) {
+                return;
+            }
+
+            // 降级到最小化 HTML
             self::cleanOutputBuffers();
-
-            // 发送错误响应
             if (!headers_sent()) {
                 http_response_code($code);
                 header('Content-Type: text/html; charset=utf-8');
             }
+            echo self::getMinimalErrorHtml($code, $title);
+        }
+    }
 
-            // 使用最小化的错误输出
-            echo self::getMinimalErrorHtml($code, $message);
+    /**
+     * 尝试使用 Blade 视图渲染错误
+     *
+     * @param array $error PHP 错误信息
+     * @param int $code HTTP 状态码
+     * @param string $title 错误标题
+     * @param bool $isMemoryError 是否为内存错误
+     * @return bool 是否成功渲染
+     */
+    private static function tryRenderBladeError(array $error, int $code, string $title, bool $isMemoryError): bool
+    {
+        if (!function_exists('view') || !function_exists('app')) {
+            return false;
+        }
+
+        try {
+            $app = app();
+            if (!$app || !$app->bound('view')) {
+                return false;
+            }
+
+            $view = $app->make('view');
+            $viewPath = __DIR__ . '/../Resources/views';
+
+            if (is_dir($viewPath)) {
+                try {
+                    $namespaces = $view->getFinder()->getHints();
+                    if (!isset($namespaces['trace'])) {
+                        $view->addNamespace('trace', $viewPath);
+                    }
+                } catch (\Throwable $e) {
+                    $view->addNamespace('trace', $viewPath);
+                }
+            }
+
+            $isDebug = ($_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? false) === 'true';
+
+            $viewData = [
+                'code' => $code,
+                'title' => $title,
+                'message' => $isDebug ? $error['message'] : '服务器发生错误，请稍后重试',
+                'requestId' => substr(md5(uniqid('', true)), 0, 12),
+                'timestamp' => date('Y-m-d H:i:s'),
+                'isDebug' => $isDebug,
+                'exception' => new \ErrorException($error['message'], 0, $error['type'], $error['file'], $error['line']),
+            ];
+
+            if ($isDebug) {
+                $viewData['list'] = [
+                    ['label' => 'Error Type', 'value' => 'FATAL_ERROR', 'type' => 'string'],
+                    ['label' => 'File', 'value' => $error['file'] . ':' . $error['line'], 'type' => 'string'],
+                    ['label' => 'Memory Limit', 'value' => ini_get('memory_limit'), 'type' => 'string'],
+                ];
+            }
+
+            foreach (['trace::error', 'trace::debug'] as $viewName) {
+                if ($view->exists($viewName)) {
+                    self::cleanOutputBuffers();
+                    if (!headers_sent()) {
+                        http_response_code($code);
+                        header('Content-Type: text/html; charset=utf-8');
+                    }
+                    echo $view->make($viewName, $viewData)->render();
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

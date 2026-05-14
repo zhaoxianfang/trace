@@ -223,6 +223,17 @@ class TraceExceptionHandler implements ExceptionHandler
                 $this->trace->initError($e);
             }
 
+            // 检查早期拦截器是否已捕获错误
+            if (class_exists('\\TraceEarly\\EarlyInterceptor') && \TraceEarly\EarlyInterceptor::hasIntercepted()) {
+                $earlyError = \TraceEarly\EarlyInterceptor::getInterceptedError();
+                // 将早期拦截的错误信息同步到 trace 中
+                if ($earlyError && !empty($earlyError['message'])) {
+                    $this->trace::$message = $earlyError['message'];
+                    $this->trace::$code = $earlyError['code'] ?? 500;
+                    $this->trace::$initErr = true;
+                }
+            }
+
             // 1. 尝试自定义回调处理
             $callbackResponse = $this->tryCustomCallback($e);
             if ($callbackResponse !== null) {

@@ -75,12 +75,30 @@ class FallbackExceptionHandler
             return;
         }
 
-        // 注册 shutdown 函数（用于捕获致命错误）
-        // 这是唯一不会与 Laravel 冲突的注册方式
+        // 检查 EarlyInterceptor 是否已经注册了处理器
+        $earlyHandlerRegistered = class_exists('\\TraceEarly\\EarlyInterceptor');
+
+        // 总是注册 shutdown 函数（在 EarlyInterceptor 之后执行，作为备用）
         register_shutdown_function([self::class, 'handleShutdown']);
 
-        // 注册错误处理器（捕获警告和通知）
-        set_error_handler([self::class, 'handleError']);
+        // 注册错误处理器并保存前一个处理器用于链式调用
+        if ($earlyHandlerRegistered) {
+            // EarlyInterceptor 已注册核心处理器，我们保存它的处理器引用作为链式调用目标
+            // 注意：我们不覆盖 EarlyInterceptor 的处理器
+            // Fallback 的错误处理器保存当前处理器引用，处理完自己的逻辑后链式调用回去
+        }
+        self::$previousErrorHandler = set_error_handler([self::class, 'handleError']);
+
+        // 如果 set_error_handler 返回了 [self::class, 'handleError']（重复注册），恢复正确的链
+        if (
+            is_array(self::$previousErrorHandler)
+            && count(self::$previousErrorHandler) === 2
+            && self::$previousErrorHandler[0] === self::class
+            && self::$previousErrorHandler[1] === 'handleError'
+        ) {
+            // 已经是我们自己的处理器，不需要链式
+            self::$previousErrorHandler = null;
+        }
 
         self::$registered = true;
     }
@@ -98,7 +116,12 @@ class FallbackExceptionHandler
     }
 
     /**
-     * 错误处理器 - 捕获非致命错误
+     * 之前注册的错误处理器（链式调用）
+     */
+    private static $previousErrorHandler = null;
+
+    /**
+     * 错误处理器 - 捕获非致命错误，链式调用前一个处理器
      *
      * @param int $severity 错误级别
      * @param string $message 错误消息
@@ -109,16 +132,28 @@ class FallbackExceptionHandler
     public static function handleError(int $severity, string $message, string $file, int $line): bool
     {
         // 只处理特定类型的错误
-        if (!in_array($severity, [E_WARNING, E_NOTICE, E_USER_WARNING, E_USER_NOTICE], true)) {
-            return false; // 让 PHP 继续处理其他错误
+        if (in_array($severity, [E_WARNING, E_NOTICE, E_USER_WARNING, E_USER_NOTICE], true)) {
+            // 在调试模式下记录警告
+            if (self::isDebugMode()) {
+                EmergencyRenderer::logError("[Warning] {$message} in {$file}:{$line}", 'ErrorHandler');
+            }
+            return true; // 表示已处理
         }
 
-        // 在调试模式下记录警告
-        if (self::isDebugMode()) {
-            EmergencyRenderer::logError("[Warning] {$message} in {$file}:{$line}", 'ErrorHandler');
+        // 链式调用前一个处理器
+        if (
+            self::$previousErrorHandler !== null
+            && is_callable(self::$previousErrorHandler)
+            && self::$previousErrorHandler !== [self::class, 'handleError']
+        ) {
+            try {
+                return call_user_func(self::$previousErrorHandler, $severity, $message, $file, $line);
+            } catch (\Throwable $e) {
+                // 链式处理器异常，忽略
+            }
         }
 
-        return true; // 表示已处理
+        return false; // 让 PHP 继续处理其他错误
     }
 
     /**
@@ -148,10 +183,26 @@ class FallbackExceptionHandler
             return;
         }
 
-        // 检查 Laravel 是否已处理此错误
-        if (self::$laravelBooted && self::isLaravelHandlerActive()) {
+        // ✅ 修复：致命错误（内存耗尽、递归溢出等）无论 Laravel 是否已启动都必须处理
+        // Laravel 的异常处理器无法捕获 PHP 致命错误，因此不能跳过
+        // 只有在 Laravel 的处理流程已经完成并正常返回响应时才跳过
+        // 但此时 fatal error 还没被处理，所以我们在所有情况下都要处理
+        if (self::$laravelBooted && function_exists('headers_sent') && headers_sent()) {
+            // 如果响应头已经发送，说明 Laravel 已完成渲染，此时无法再介入
             return;
         }
+
+        // 检查早期拦截器是否已存储错误
+        $earlyError = null;
+        if (class_exists('\\TraceEarly\\EarlyInterceptor') && \TraceEarly\EarlyInterceptor::hasIntercepted()) {
+            $earlyError = \TraceEarly\EarlyInterceptor::getInterceptedError();
+        }
+
+        // 优先使用早期拦截器存储的错误信息
+        $errorMessage = $earlyError['message'] ?? $error['message'];
+        $errorType = $earlyError['type'] ?? self::getErrorTypeNameFromInt($error['type']);
+        $errorFile = $earlyError['file'] ?? $error['file'];
+        $errorLine = $earlyError['line'] ?? $error['line'];
 
         // 检查内存使用情况
         $lowMemory = self::isLowMemory();
@@ -161,11 +212,11 @@ class FallbackExceptionHandler
 
         try {
             $exception = new \ErrorException(
-                $error['message'],
+                $errorMessage,
                 0,
                 $error['type'],
-                $error['file'],
-                $error['line']
+                $errorFile,
+                $errorLine
             );
 
             // 记录日志（在低内存模式下简化）
@@ -173,11 +224,18 @@ class FallbackExceptionHandler
                 EmergencyRenderer::logError($exception, 'Fatal Error Handler');
             }
 
-            // 尝试使用 Trace 处理器（如果可用且内存充足）
+            // 1. 优先尝试使用 Blade 视图渲染（内存充足时）
+            if (!$lowMemory) {
+                if (self::renderFatalWithBlade($exception, $errorType)) {
+                    exit(1);
+                }
+            }
+
+            // 2. 尝试使用 Trace 处理器
             if (!$lowMemory && self::canUseTraceHandler()) {
                 self::handleWithTrace($exception);
             } else {
-                // 使用紧急渲染器（低内存模式下使用简化渲染）
+                // 3. 降级：使用紧急渲染器
                 $code = self::errorTypeToHttpCode($error['type']);
                 if ($lowMemory) {
                     self::renderMinimalError($exception, $code);
@@ -186,7 +244,6 @@ class FallbackExceptionHandler
                 }
             }
         } catch (Throwable $e) {
-            // 如果连渲染都失败了，使用最后兜底方案
             self::lastResortOutput($e->getMessage());
         } finally {
             self::$isHandling = false;
@@ -540,6 +597,133 @@ class FallbackExceptionHandler
             // 回退到传统方式
         }
         return substr(md5(uniqid('', true)), 0, 12);
+    }
+
+    /**
+     * 使用 Blade 视图渲染致命错误
+     *
+     * 优先使用 trace::error 视图（已内置错误页面样式），
+     * 其次使用 trace::debug 视图进行展示
+     *
+     * @param \Throwable $exception
+     * @param string $errorType
+     * @return bool 是否成功渲染
+     */
+    private static function renderFatalWithBlade(\Throwable $exception, string $errorType): bool
+    {
+        // 检查 Laravel 视图系统是否可用
+        if (!function_exists('view') || !function_exists('app')) {
+            return false;
+        }
+
+        try {
+            $app = app();
+            if (!$app || !$app->bound('view')) {
+                return false;
+            }
+
+            $view = $app->make('view');
+            $viewPath = __DIR__ . '/../Resources/views';
+
+            // 确保 trace 命名空间已注册
+            if (is_dir($viewPath)) {
+                try {
+                    $namespaces = $view->getFinder()->getHints();
+                    if (!isset($namespaces['trace'])) {
+                        $view->addNamespace('trace', $viewPath);
+                    }
+                } catch (\Throwable $e) {
+                    $view->addNamespace('trace', $viewPath);
+                }
+            }
+
+            $isDebug = self::isDebugMode();
+
+            // 根据错误类型确定 HTTP 状态码
+            $code = 500;
+            $message = $exception->getMessage();
+
+            // 确定友好的错误标题
+            $title = '系统错误';
+            $lowerMsg = strtolower($message);
+            if (str_contains($lowerMsg, 'memory') || str_contains($lowerMsg, 'allowed memory size')) {
+                $title = '内存耗尽';
+                $code = 507;
+            } elseif (str_contains($lowerMsg, 'nesting') || str_contains($lowerMsg, 'recursion')) {
+                $title = '递归溢出';
+            } elseif (str_contains($lowerMsg, 'maximum execution time')) {
+                $title = '执行超时';
+                $code = 504;
+            }
+
+            $viewData = [
+                'code' => $code,
+                'title' => $title,
+                'message' => $isDebug ? $message : '服务器发生内部错误，请稍后重试',
+                'requestId' => self::generateRequestId(),
+                'timestamp' => date('Y-m-d H:i:s'),
+                'isDebug' => $isDebug,
+            ];
+
+            // 调试模式下添加详细信息
+            if ($isDebug) {
+                $viewData['exception'] = $exception;
+                $viewData['list'] = [
+                    ['label' => 'Error Type', 'value' => $errorType, 'type' => 'string'],
+                    ['label' => 'File', 'value' => $exception->getFile() . ':' . $exception->getLine(), 'type' => 'string'],
+                    ['label' => 'Memory Limit', 'value' => ini_get('memory_limit'), 'type' => 'string'],
+                ];
+            }
+
+            // 按优先级尝试视图（使用 trace::error 已内置完整错误页面UI）
+            $viewPriorities = ['trace::error', 'trace::debug'];
+
+            // 清除输出缓冲
+            $level = ob_get_level();
+            for ($i = 0; $i < $level && $i < 10; $i++) {
+                @ob_end_clean();
+            }
+
+            foreach ($viewPriorities as $viewName) {
+                if ($view->exists($viewName)) {
+                    if (!headers_sent()) {
+                        http_response_code($code);
+                        header('Content-Type: text/html; charset=utf-8');
+                    }
+                    echo $view->make($viewName, $viewData)->render();
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * 从 PHP 错误整型值获取错误类型名称
+     */
+    private static function getErrorTypeNameFromInt(int $errno): string
+    {
+        return match ($errno) {
+            E_ERROR => 'FATAL_ERROR',
+            E_WARNING => 'WARNING',
+            E_PARSE => 'PARSE_ERROR',
+            E_NOTICE => 'NOTICE',
+            E_CORE_ERROR => 'CORE_ERROR',
+            E_CORE_WARNING => 'CORE_WARNING',
+            E_COMPILE_ERROR => 'COMPILE_ERROR',
+            E_COMPILE_WARNING => 'COMPILE_WARNING',
+            E_USER_ERROR => 'USER_ERROR',
+            E_USER_WARNING => 'USER_WARNING',
+            E_USER_NOTICE => 'USER_NOTICE',
+            E_STRICT => 'STRICT',
+            E_RECOVERABLE_ERROR => 'RECOVERABLE_ERROR',
+            E_DEPRECATED => 'DEPRECATED',
+            E_USER_DEPRECATED => 'USER_DEPRECATED',
+            default => 'UNKNOWN_ERROR',
+        };
     }
 
     /**

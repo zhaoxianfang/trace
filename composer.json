@@ -21,6 +21,7 @@
       "zxf\\Trace\\": "src/Trace/"
     },
     "files": [
+      "src/bootstrap.php",
       "src/helpers.php"
     ]
   },
