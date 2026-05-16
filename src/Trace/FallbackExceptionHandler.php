@@ -129,8 +129,8 @@ class FallbackExceptionHandler
      *
      * 注意：
      * 1. 形成调用链：BootErrorHandler(原始) → FallbackExceptionHandler
-     * 2. 拒绝只检查 hasIntercepted 就跳过——必须始终调用BootErrorHandler的处理器
-     *    因为 BootErrorHandler 需要检测关键警告（如 resource exhaustion）
+     * 2. ★ 关键警告由本处理器(顶层注册处理器)统一渲染和 exit，
+     *    避免 BootErrorHandler 在嵌套调用链中 exit 导致 PHP 也输出默认错误
      *
      * @param int $severity 错误级别
      * @param string $message 错误消息
@@ -141,15 +141,25 @@ class FallbackExceptionHandler
     public static function handleError(int $severity, string $message, string $file, int $line): bool
     {
         // 始终先调用原始处理器（BootErrorHandler 的处理器）
-        // 注意：不能因为 hasIntercepted 为 true 就跳过，因为 BootErrorHandler
-        // 存储了错误信息不代表它已经处理了全部（例如需要标记关键警告）
+        // BootErrorHandler 标记关键警告但不渲染不 exit
         $originalResult = null;
         if (self::$originalErrorHandler !== null) {
             $originalResult = call_user_func(self::$originalErrorHandler, $severity, $message, $file, $line);
         }
 
-        // 如果 BootErrorHandler 返回 true 表示它已经处理完毕（如关键警告已被标记）
+        // ★ BootErrorHandler 返回 true → 关键警告已被标记，本处理器执行渲染
         if ($originalResult === true) {
+            // 检查全局变量是否有拦截数据（bootstrap.php 设置 $_trace_last）
+            $lastError = $GLOBALS['_trace_last'] ?? null;
+            $isChild = $GLOBALS['_trace_child'] ?? false;
+            if ($lastError !== null && !$isChild) {
+                // 使用 emergencyRender 进行渲染（不依赖 Laravel）
+                $msg = $lastError['message'] ?? $message;
+                $file2 = $lastError['file'] ?? $file;
+                $line2 = $lastError['line'] ?? $line;
+                EmergencyRenderer::render(new \ErrorException($msg, 0, 500, $file2, $line2), 500);
+                exit(1);
+            }
             return true;
         }
 
