@@ -11,6 +11,13 @@ $_trace_last = null;
 $_trace_crit = false;
 $_trace_child = false;
 
+/* ── 立即抑制 PHP 默认错误显示 ── */
+// Trace 包会全面接管错误显示；关闭 PHP 默认输出可防止 deprecated/notice
+// 等错误与 Trace 渲染页面重叠污染。保留 error_log 记录供排查。
+$_trace_orig_display_errors = ini_get('display_errors');
+$_trace_orig_error_reporting = error_reporting();
+@ini_set('display_errors', '0');
+
 /* ── 工具函数 ── */
 function _t_clean(): void { $l=ob_get_level();for($i=0;$i<$l&&$i<20;$i++)@ob_end_clean(); }
 function _t_bytes(int $b): string {
@@ -30,14 +37,22 @@ function _t_dbg(): bool {
   $d=$_ENV['APP_DEBUG']??$_SERVER['APP_DEBUG']??getenv('APP_DEBUG')??false;
   return is_string($d)?in_array(strtolower($d),['true','1','yes','on'],true):(bool)$d;
 }
-function _t_fatal(int $t): bool { return in_array($t,[E_ERROR,E_PARSE,E_CORE_ERROR,E_COMPILE_ERROR,E_USER_ERROR],true); }
+function _t_fatal(int $t): bool {
+  $fatal = [E_ERROR,E_PARSE,E_CORE_ERROR,E_COMPILE_ERROR,E_USER_ERROR];
+  if (defined('E_STRICT')) { $fatal[] = E_STRICT; }
+  return in_array($t, $fatal, true);
+}
 function _t_names(int $n): string {
-  static $m=[E_ERROR=>'FATAL',E_WARNING=>'WARN',E_PARSE=>'PARSE',E_NOTICE=>'NOTICE',
-    E_CORE_ERROR=>'CORE_ERR',E_CORE_WARNING=>'CORE_WARN',E_COMPILE_ERROR=>'COMPILE_ERR',
-    E_COMPILE_WARNING=>'COMPILE_WARN',E_USER_ERROR=>'USER_ERR',E_USER_WARNING=>'USER_WARN',
-    E_USER_NOTICE=>'USER_NOTICE',E_RECOVERABLE_ERROR=>'RECOVERABLE',E_DEPRECATED=>'DEPRECATED',
-    E_USER_DEPRECATED=>'USER_DEP'];
-  return $m[$n]??'UNKNOWN';
+  static $m = null;
+  if ($m === null) {
+    $m = [E_ERROR=>'FATAL',E_WARNING=>'WARN',E_PARSE=>'PARSE',E_NOTICE=>'NOTICE',
+      E_CORE_ERROR=>'CORE_ERR',E_CORE_WARNING=>'CORE_WARN',E_COMPILE_ERROR=>'COMPILE_ERR',
+      E_COMPILE_WARNING=>'COMPILE_WARN',E_USER_ERROR=>'USER_ERR',E_USER_WARNING=>'USER_WARN',
+      E_USER_NOTICE=>'USER_NOTICE',E_RECOVERABLE_ERROR=>'RECOVERABLE',E_DEPRECATED=>'DEPRECATED',
+      E_USER_DEPRECATED=>'USER_DEP'];
+    if (defined('E_STRICT')) { $m[E_STRICT] = 'STRICT'; }
+  }
+  return $m[$n] ?? 'UNKNOWN';
 }
 function _t_crit(string $m): bool {
   static $p=null;
@@ -60,35 +75,81 @@ function _t_is_ajax(): bool {
 /* ═══ 应急渲染（零依赖）═══ */
 function _t_render(int $code, string $badge, string $msg, string $sug='', string $file='', int $line=0): void {
   global $_trace_id;
+
+  // ★ 关键：临时完全关闭 PHP 错误显示与报告，确保渲染过程不受任何 PHP 错误污染
+  @ini_set('display_errors', '0');
+  error_reporting(0);
+
   _t_clean();
 
-  // ★ CLI 模式：纯文本 + ANSI 颜色
+  // ★ CLI 模式：纯文本 + ANSI 颜色（优化版）
   if (PHP_SAPI === 'cli') {
-    $mem = '';
-    try { $u=memory_get_usage(true);$mem=' | Memory: '._t_bytes($u); } catch(\Throwable){}
     $isD = _t_dbg();
-    echo "\n";
-    echo "  \033[1;31m╔══════════════════════════════════════╗\033[0m\n";
-    echo "  \033[1;31m║     Trace Error Intercepted          ║\033[0m\n";
-    echo "  \033[1;31m╚══════════════════════════════════════╝\033[0m\n";
-    echo "  \033[1;33m  [{$code}] {$badge}\033[0m\n";
-    echo "  \033[0;37m  Message:\033[0m {$msg}\n";
-    if (!empty($sug)) echo "  \033[0;36m  Suggestion:\033[0m {$sug}\n";
-    if ($isD && !empty($file)) echo "  \033[0;37m  File:\033[0m {$file}:{$line}\n";
-    echo "  \033[0;37m  PHP:\033[0m " . PHP_VERSION . "{$mem}\n";
-    echo "  \033[0;37m  ID:\033[0m {$_trace_id}\n";
-    echo "  \033[0;37m  Time:\033[0m " . date('Y-m-d H:i:s') . "\n\n";
+    $mem = ''; $peak = '';
+    try {
+      $u = memory_get_usage(true);
+      $p = memory_get_peak_usage(true);
+      $mem = _t_bytes($u);
+      $peak = _t_bytes($p);
+    } catch (\Throwable) {}
+
+    $out = [];
+    $out[] = '';
+    $out[] = "  \033[48;5;196m\033[1;97m  ⚠ TRACE ERROR  \033[0m";
+    $out[] = '';
+    $out[] = "  \033[1;91m▸ Status:\033[0m  {$code}";
+    $out[] = "  \033[1;91m▸ Type:\033[0m    {$badge}";
+    $out[] = "  \033[1;91m▸ Message:\033[0m {$msg}";
+    if (!empty($sug)) {
+      $out[] = '';
+      $out[] = "  \033[1;96m▸ Suggestion:\033[0m";
+      foreach (explode("\n", $sug) as $sgLine) {
+        $sgLine = trim($sgLine);
+        if ($sgLine !== '') $out[] = "      • {$sgLine}";
+      }
+    }
+    if ($isD && !empty($file)) {
+      $out[] = '';
+      $out[] = "  \033[0;90m▸ File:\033[0m {$file}:{$line}";
+    }
+    $out[] = '';
+    $out[] = "  \033[0;90m  PHP:    \033[0m" . PHP_VERSION;
+    if ($mem !== '') $out[] = "  \033[0;90m  Memory: \033[0m{$mem} (peak: {$peak})";
+    $out[] = "  \033[0;90m  ID:     \033[0m{$_trace_id}";
+    $out[] = "  \033[0;90m  Time:   \033[0m" . date('Y-m-d H:i:s');
+    $out[] = '';
+    $out[] = "  \033[0;90m" . str_repeat('─', 50) . "\033[0m";
+    $out[] = '';
+
+    echo implode("\n", $out);
     return;
   }
 
-  // ★ Ajax 模式：JSON
+  // ★ Ajax 模式：JSON（优化版，统一响应结构）
   if (_t_is_ajax()) {
-    if(!headers_sent()){http_response_code($code);header('Content-Type:application/json;charset=utf-8');}
-    $resp = ['code'=>$code,'message'=>$msg,'intercepted'=>true];
-    if (_t_dbg()) {
-      $resp['debug'] = ['type'=>$badge,'file'=>$file,'line'=>$line,'suggestion'=>$sug];
+    if (!headers_sent()) {
+      http_response_code($code);
+      header('Content-Type: application/json; charset=utf-8');
     }
-    echo json_encode($resp, JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT);
+    $resp = [
+      'success' => false,
+      'code'    => $code,
+      'message' => $msg,
+      'meta'    => [
+        'request_id' => $_trace_id,
+        'timestamp'  => date('c'),
+        'php'        => PHP_VERSION,
+      ],
+    ];
+    if (_t_dbg()) {
+      $resp['debug'] = [
+        'type'       => $badge,
+        'file'       => $file,
+        'line'       => $line,
+        'suggestion' => $sug,
+      ];
+    }
+    echo json_encode($resp, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     return;
   }
 
@@ -122,40 +183,67 @@ h1{font-size:22px;color:#fff;margin-bottom:10px;font-weight:700}
 .sg{font-size:13px;color:#68d391;background:rgba(104,211,145,.08);padding:12px 16px;margin-bottom:15px;text-align:left;border-left:3px solid #68d391;white-space:pre-line;line-height:1.6}
 .d{font-size:12px;color:rgba(255,255,255,.4);margin-bottom:15px;padding:10px 14px;background:rgba(0,0,0,.25);border-radius:12px;text-align:left;line-height:1.7}
 .d strong{color:rgba(255,255,255,.5)}
-.b,.b2{display:inline-flex;padding:12px 28px;border-radius:14px;text-decoration:none;font-size:14px;font-weight:600;transition:all .3s;cursor:pointer;align-items:center;gap:8px}
+.ac{display:flex;gap:10px;justify-content:center;flex-wrap:nowrap;padding:4px 0}
+.b,.b2{display:inline-flex;padding:12px 28px;border-radius:14px;text-decoration:none;font-size:14px;font-weight:600;transition:all .3s;cursor:pointer;align-items:center;gap:8px;white-space:nowrap}
 .b{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 4px 20px rgba(102,126,234,.4)}
 .b:hover{transform:translateY(-3px);box-shadow:0 8px 30px rgba(102,126,234,.55)}
 .b2{background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.1)}
 .b2:hover{background:rgba(255,255,255,.14);transform:translateY(-2px)}
+.tip{margin-top:16px;font-size:12px;color:rgba(255,255,255,.3)}
+.tip a{color:#7f9cf5;text-decoration:none;transition:color .3s}
+.tip a:hover{color:#a78bfa}
 .t{margin-top:16px;font-size:11px;color:rgba(255,255,255,.25)}
 </style></head><body><div class="c">
 <div class="s">'.$code.'</div>
 <div class="g">'.$b.'</div>
 <h1>系统错误</h1>
 <p class="p">'.$m.'</p>'.$sugHtml.$detail.'
-<a href="/" class="b">返回首页</a>'.$contactBtn.'
-<div class="t">ID: '.htmlspecialchars($_trace_id,ENT_QUOTES|ENT_HTML5,'UTF-8').' | '.date('Y-m-d H:i:s').'</div>
+<div class="ac"><a href="/" class="b">返回首页</a>'.$contactBtn.'</div>
+<div class="tip">技术支持：<a href="https://yoc.cn" target="_blank" rel="noopener">yoc.cn</a></div>
+<div class="t">ID: '.htmlspecialchars($_trace_id ?? '',ENT_QUOTES|ENT_HTML5,'UTF-8').' | '.date('Y-m-d H:i:s').'</div>
 </div></body></html>';
 }
 
 /* ═══ 错误处理器 ═══ */
 set_error_handler(function(int $s, string $m, string $f, int $l) {
   global $_trace_last, $_trace_crit, $_trace_child, $_trace_id;
-  if(in_array($s,[E_NOTICE,E_USER_NOTICE,E_DEPRECATED,E_USER_DEPRECATED,E_STRICT],true))return false;
-  $c=_t_crit($m);
-  if($_trace_crit&&!$c)return false;
-  $_trace_last=['type'=>_t_names($s),'code'=>$s,'message'=>$m,'file'=>$f,'line'=>$l,'time'=>date('Y-m-d H:i:s'),'eid'=>$_trace_id,'critical'=>$c];
-  if($c) $_trace_crit=true;
-  // ★ 不在此处渲染/exit，只标记关键警告并返回 true 阻止 PHP 默认输出
-  // 渲染由 FallbackExceptionHandler(实际注册的处理器)或 shutdown 统一执行
-  return $c;
+
+  // 对通知和弃用类错误：完全静默，阻止 PHP 默认输出到浏览器
+  $ignoreTypes = [E_NOTICE, E_USER_NOTICE, E_DEPRECATED, E_USER_DEPRECATED];
+  if (defined('E_STRICT')) { $ignoreTypes[] = E_STRICT; }
+
+  if (in_array($s, $ignoreTypes, true)) {
+    // 调试模式下记录到错误日志，但绝不输出到浏览器
+    if (_t_dbg()) {
+      @error_log("[Trace][Notice/Deprecated] {$m} in {$f}:{$l}");
+    }
+    return true; // ★ 返回 true 阻止 PHP 默认错误输出
+  }
+
+  $c = _t_crit($m);
+  if ($_trace_crit && !$c) return true; // 已有关键错误且当前非关键，静默忽略
+
+  $_trace_last = ['type'=>_t_names($s),'code'=>$s,'message'=>$m,'file'=>$f,'line'=>$l,'time'=>date('Y-m-d H:i:s'),'eid'=>$_trace_id,'critical'=>$c];
+  if ($c) $_trace_crit = true;
+
+  // ★ 对所有非忽略错误都返回 true，阻止 PHP 默认错误输出
+  // Trace 会在 shutdown 或 FallbackExceptionHandler 中统一渲染
+  return true;
 });
 
 /* ═══ 异常处理器 ═══ */
 set_exception_handler(function(\Throwable $e) {
   global $_trace_last, $_trace_child, $_trace_id;
-  $_trace_last=['type'=>get_class($e),'code'=>$e->getCode()?:500,'message'=>$e->getMessage(),'file'=>$e->getFile(),'line'=>$e->getLine(),'time'=>date('Y-m-d H:i:s'),'eid'=>$_trace_id];
-  if(!$_trace_child){_t_render(500,get_class($e),$e->getMessage(),'请检查代码逻辑',$e->getFile(),$e->getLine());exit(1);}
+
+  // 临时关闭 PHP 错误显示，防止异常处理期间产生额外输出
+  @ini_set('display_errors', '0');
+  error_reporting(0);
+
+  $_trace_last = ['type'=>get_class($e),'code'=>$e->getCode()?:500,'message'=>$e->getMessage(),'file'=>$e->getFile(),'line'=>$e->getLine(),'time'=>date('Y-m-d H:i:s'),'eid'=>$_trace_id];
+  if (!$_trace_child) {
+    _t_render(500, get_class($e), $e->getMessage(), '请检查代码逻辑', $e->getFile(), $e->getLine());
+    exit(1);
+  }
 });
 
 /* ═══ Shutdown + 内存预留 ═══ */
@@ -164,6 +252,11 @@ register_shutdown_function(function() use (&$_trace_mem) {
   global $_trace_last, $_trace_crit, $_trace_id;
   $_trace_mem = '';
   $e = error_get_last();
+
+  // ★ 关键：shutdown 阶段再次确保 PHP 错误显示已关闭
+  // 防止致命错误触发前已有 deprecated/notice 输出污染页面
+  @ini_set('display_errors', '0');
+  error_reporting(0);
 
   // ★ 关键修复：一旦检测到错误并渲染，立即 exit(1) 阻止后续所有输出
   // 防止 PHP/Laravel 的默认错误显示与 Trace 的拦截页面重叠
@@ -225,6 +318,12 @@ if(PHP_SAPI!=='cli'&&PHP_OS_FAMILY!=='Windows'
     exit(0);
   }
 }
+
+/* ── 兼容别名（供 BootErrorHandler 等使用）── */
+if (!function_exists('_trace_is_fatal')) { function _trace_is_fatal(int $t): bool { return _t_fatal($t); } }
+if (!function_exists('_trace_err_name')) { function _trace_err_name(int $n): string { return _t_names($n); } }
+if (!function_exists('_trace_debug')) { function _trace_debug(): bool { return _t_dbg(); } }
+if (!function_exists('_trace_clean_buf')) { function _trace_clean_buf(): void { _t_clean(); } }
 
 /* 加载 BootErrorHandler 补充（Blade 渲染） */
 if(class_exists('\zxf\Trace\BootErrorHandler')){

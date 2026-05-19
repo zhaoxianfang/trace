@@ -83,14 +83,19 @@ html,body{height:100%}
   padding:5px 12px;background:rgba(102,126,234,.08);border-radius:8px;font-size:13px;transition:all .3s}
 .trace-debug-page .fl:hover{background:rgba(102,126,234,.18);color:#a78bfa;transform:translateY(-1px)}
 
-/* 按钮 */
-.trace-debug-page .ac{display:flex;gap:12px;justify-content:center;margin-top:30px;animation:fs .6s ease-out .4s both}
+/* 按钮 – 单行水平排列 */
+.trace-debug-page .ac{display:flex;gap:12px;justify-content:center;flex-wrap:nowrap;margin-top:30px;animation:fs .6s ease-out .4s both}
 .trace-debug-page .btn{padding:12px 26px;border-radius:12px;text-decoration:none;font-size:14px;font-weight:600;
-  transition:all .3s;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+  transition:all .3s;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .trace-debug-page .bp{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 4px 15px rgba(102,126,234,.3)}
 .trace-debug-page .bp:hover{transform:translateY(-3px);box-shadow:0 8px 25px rgba(102,126,234,.5)}
 .trace-debug-page .bs{background:rgba(255,255,255,.06);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.08)}
 .trace-debug-page .bs:hover{background:rgba(255,255,255,.1);transform:translateY(-2px)}
+
+/* 技术支持提示 */
+.trace-debug-page .tip{margin-top:16px;font-size:12px;color:rgba(255,255,255,.25);animation:fs .6s ease-out .5s both;text-align:center}
+.trace-debug-page .tip a{color:#7f9cf5;text-decoration:none;transition:color .3s}
+.trace-debug-page .tip a:hover{color:#a78bfa}
 
 /* 底栏 */
 .trace-debug-page .mb{display:flex;justify-content:space-between;align-items:center;
@@ -98,8 +103,8 @@ html,body{height:100%}
 .trace-debug-page .mb>span{display:flex;align-items:center;gap:5px}
 @media(max-width:640px){
   .trace-debug-page{padding:20px 12px}.trace-debug-page h1{font-size:24px}
-  .trace-debug-page .it{padding:12px}.trace-debug-page .ac{flex-direction:column}
-  .trace-debug-page .btn{width:100%;justify-content:center}.trace-debug-page .mb{flex-direction:column;gap:6px;text-align:center}
+  .trace-debug-page .it{padding:12px}.trace-debug-page .ac{flex-direction:row;gap:8px}
+  .trace-debug-page .btn{padding:10px 16px;font-size:13px}.trace-debug-page .tip{margin-top:12px;font-size:11px}.trace-debug-page .mb{flex-direction:column;gap:6px;text-align:center}
 }
 </style></head><body>
 <div class="trace-debug-page">
@@ -149,6 +154,7 @@ html,body{height:100%}
       <a href="{{url('/')}}" class="btn bp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>首页</a>
       <button onclick="history.back()" class="btn bs"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>返回</button>
     </div>
+    <div class="tip">技术支持：<a href="https://yoc.cn" target="_blank" rel="noopener">yoc.cn</a></div>
   </div>
 </div>
 </body></html>

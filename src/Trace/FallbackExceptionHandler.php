@@ -140,6 +140,10 @@ class FallbackExceptionHandler
      */
     public static function handleError(int $severity, string $message, string $file, int $line): bool
     {
+        // 临时关闭 PHP 错误显示，防止处理期间产生额外输出
+        @ini_set('display_errors', '0');
+        error_reporting(0);
+
         // 始终先调用原始处理器（BootErrorHandler 的处理器）
         // BootErrorHandler 标记关键警告但不渲染不 exit
         $originalResult = null;
@@ -200,6 +204,10 @@ class FallbackExceptionHandler
         if (class_exists(BootErrorHandler::class) && BootErrorHandler::hasIntercepted()) {
             return;
         }
+
+        // 临时关闭 PHP 错误显示，防止处理期间产生额外输出
+        @ini_set('display_errors', '0');
+        error_reporting(0);
 
         $error = error_get_last();
         if ($error === null) {
@@ -274,6 +282,10 @@ class FallbackExceptionHandler
             return;
         }
 
+        // 临时关闭 PHP 错误显示
+        @ini_set('display_errors', '0');
+        error_reporting(0);
+
         self::$isHandling = true;
         self::$handledCount++;
 
@@ -311,6 +323,10 @@ class FallbackExceptionHandler
         if (self::$isHandling || self::$handledCount >= self::$maxHandleCount) {
             return;
         }
+
+        // 临时关闭 PHP 错误显示
+        @ini_set('display_errors', '0');
+        error_reporting(0);
 
         self::$isHandling = true;
         self::$handledCount++;
@@ -396,6 +412,10 @@ class FallbackExceptionHandler
      */
     private static function renderMinimalError(Throwable $exception, int $code): void
     {
+        // 临时关闭 PHP 错误显示
+        @ini_set('display_errors', '0');
+        error_reporting(0);
+
         if (!headers_sent()) {
             http_response_code($code);
             header('Content-Type: text/html; charset=utf-8');
@@ -685,8 +705,8 @@ class FallbackExceptionHandler
      */
     private static function isDebugMode(): bool
     {
-        // 多维度检查调试模式
-        $debug = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? false;
+        // 多维度检查调试模式，与 bootstrap.php _t_dbg() 保持一致
+        $debug = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? getenv('APP_DEBUG') ?? false;
 
         if (is_string($debug)) {
             return in_array(strtolower($debug), ['true', '1', 'yes', 'on'], true);
@@ -707,6 +727,10 @@ class FallbackExceptionHandler
         for ($i = 0; $i < $level; $i++) {
             @ob_end_clean();
         }
+
+        // 临时关闭 PHP 错误显示
+        @ini_set('display_errors', '0');
+        error_reporting(0);
 
         if (!headers_sent()) {
             http_response_code(500);

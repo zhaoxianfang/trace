@@ -48,6 +48,12 @@ class EmergencyRenderer
 
         self::$isRendering = true;
 
+        // ★ 临时关闭 PHP 错误显示，防止渲染过程被污染
+        $originalDisplayErrors = ini_get('display_errors');
+        $originalErrorReporting = error_reporting();
+        @ini_set('display_errors', '0');
+        error_reporting(0);
+
         try {
             // 清除所有输出缓冲
             self::cleanOutputBuffers();
@@ -95,6 +101,9 @@ class EmergencyRenderer
                 echo "Error {$code}: System Error";
             }
         } finally {
+            // 恢复原始错误显示设置
+            @ini_set('display_errors', $originalDisplayErrors);
+            error_reporting($originalErrorReporting);
             self::$isRendering = false;
         }
     }
@@ -176,6 +185,11 @@ class EmergencyRenderer
             'success' => false,
             'code' => $code,
             'message' => self::getPublicMessage($errorInfo['message'], $code),
+            'meta' => [
+                'request_id' => self::generateRequestId(),
+                'timestamp' => date('c'),
+                'php' => PHP_VERSION,
+            ],
         ];
 
         if ($isDebug) {
@@ -184,11 +198,11 @@ class EmergencyRenderer
                 'original_message' => $errorInfo['message'],
                 'file' => $errorInfo['file'],
                 'line' => $errorInfo['line'],
-                'trace' => explode("\n", $errorInfo['trace']),
+                'trace' => array_filter(explode("\n", $errorInfo['trace'])),
             ];
         }
 
-        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     /**
@@ -202,15 +216,35 @@ class EmergencyRenderer
 
         $isDebug = self::isDebugMode();
         $message = self::getPublicMessage($errorInfo['message'], $code);
+        $rid = self::generateRequestId();
 
-        echo "Error {$code}: {$message}\n";
+        $out = [];
+        $out[] = '';
+        $out[] = '  [TRACE ERROR]';
+        $out[] = '';
+        $out[] = "  ▸ Status:  {$code}";
+        $out[] = "  ▸ Type:    {$errorInfo['type']}";
+        $out[] = "  ▸ Message: {$message}";
 
         if ($isDebug) {
-            echo "\nType: {$errorInfo['type']}\n";
-            echo "Message: {$errorInfo['message']}\n";
-            echo "File: {$errorInfo['file']}:{$errorInfo['line']}\n";
-            echo "\nStack Trace:\n{$errorInfo['trace']}\n";
+            $out[] = '';
+            $out[] = '  ── Debug ──';
+            $out[] = "  File: {$errorInfo['file']}:{$errorInfo['line']}";
+            if (!empty($errorInfo['trace'])) {
+                $out[] = '';
+                $out[] = '  Stack Trace:';
+                foreach (array_filter(explode("\n", $errorInfo['trace'])) as $line) {
+                    $out[] = '    ' . $line;
+                }
+            }
         }
+
+        $out[] = '';
+        $out[] = "  Request ID: {$rid}";
+        $out[] = "  Timestamp:  " . date('Y-m-d H:i:s');
+        $out[] = '';
+
+        echo implode("\n", $out);
     }
 
     /**
@@ -298,15 +332,20 @@ class EmergencyRenderer
                         $this->info = $info;
 
                         // 使用反射设置 file 和 line
+                        // PHP 8.1+ setAccessible() 默认为 true，无需调用
                         try {
                             $reflection = new \ReflectionClass(\Exception::class);
 
                             $fileProp = $reflection->getProperty('file');
-                            $fileProp->setAccessible(true);
+                            if (PHP_VERSION_ID < 80100) {
+                                $fileProp->setAccessible(true);
+                            }
                             $fileProp->setValue($this, $info['file'] ?? '');
 
                             $lineProp = $reflection->getProperty('line');
-                            $lineProp->setAccessible(true);
+                            if (PHP_VERSION_ID < 80100) {
+                                $lineProp->setAccessible(true);
+                            }
                             $lineProp->setValue($this, $info['line'] ?? 0);
 
                             // trace 是字符串，需要转换为数组
@@ -322,7 +361,9 @@ class EmergencyRenderer
                             }
 
                             $traceProp = $reflection->getProperty('trace');
-                            $traceProp->setAccessible(true);
+                            if (PHP_VERSION_ID < 80100) {
+                                $traceProp->setAccessible(true);
+                            }
                             $traceProp->setValue($this, $trace);
                         } catch (\Throwable $e) {
                             // 反射失败，忽略
@@ -394,8 +435,8 @@ DEBUG;
         @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.85;transform:scale(.97)} }
         .title { font-size:24px; color:#fff; margin-bottom:12px; font-weight:700; }
         .msg { font-size:15px; color:rgba(255,255,255,.7); margin-bottom:25px; line-height:1.7; }
-        .actions { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
-        .btn { padding:12px 28px; border-radius:14px; text-decoration:none; font-size:14px; font-weight:600; transition:all .3s cubic-bezier(.16,1,.3,1); border:none; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
+        .actions { display:flex; gap:12px; justify-content:center; flex-wrap:nowrap; }
+        .btn { padding:12px 28px; border-radius:14px; text-decoration:none; font-size:14px; font-weight:600; transition:all .3s cubic-bezier(.16,1,.3,1); border:none; cursor:pointer; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
         .btn-primary { background:linear-gradient(135deg,#667eea,#764ba2); color:white; box-shadow:0 4px 20px rgba(102,126,234,.4); }
         .btn-primary:hover { transform:translateY(-3px); box-shadow:0 8px 30px rgba(102,126,234,.55); }
         .btn-secondary { background:rgba(255,255,255,.1); color:rgba(255,255,255,.8); border:1px solid rgba(255,255,255,.12); }
@@ -411,7 +452,10 @@ DEBUG;
         .dbg-file { color:#7f9cf5; }
         .dbg-val pre { margin:4px 0 0; background:rgba(0,0,0,.3); padding:10px; border-radius:8px; overflow-x:auto; color:rgba(255,255,255,.7); font-size:11px; max-height:250px; overflow-y:auto; }
         .meta-info { margin-top:20px; padding-top:18px; border-top:1px solid rgba(255,255,255,.06); font-size:11px; color:rgba(255,255,255,.3); }
-        @media (max-width:480px) { .box{padding:30px 20px} .code{font-size:64px} .title{font-size:20px} }
+        .tip { margin-top:16px; font-size:12px; color:rgba(255,255,255,.3); }
+        .tip a { color:#7f9cf5; text-decoration:none; transition:color .3s; }
+        .tip a:hover { color:#a78bfa; }
+        @media (max-width:480px) { .box{padding:30px 20px} .code{font-size:64px} .title{font-size:20px} .actions{flex-direction:row;gap:8px} .btn{padding:10px 16px;font-size:13px} .tip{margin-top:12px;font-size:11px} }
     </style>
 </head>
 <body>
@@ -424,6 +468,7 @@ DEBUG;
             <a href="/" class="btn btn-primary">返回首页</a>
             <button onclick="location.reload()" class="btn btn-secondary">刷新页面</button>
         </div>
+        <div class="tip">技术支持：<a href="https://yoc.cn" target="_blank" rel="noopener">yoc.cn</a></div>
         {$debugSection}
         <div class="meta-info">请求ID: {$requestId} | {$timestamp}</div>
     </div>
@@ -539,8 +584,8 @@ HTML;
      */
     private static function isDebugMode(): bool
     {
-        // 检查环境变量
-        $debug = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? false;
+        // 多维度检查调试模式，与 bootstrap.php _t_dbg() 保持一致
+        $debug = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? getenv('APP_DEBUG') ?? false;
 
         if (is_string($debug)) {
             return in_array(strtolower($debug), ['true', '1', 'yes', 'on'], true);

@@ -1160,7 +1160,7 @@ class Handle
         $viewFiles = [];
         // 获取当前路由的其他视图文件
         foreach (app('view')->getFinder()->getViews() as $alias => $view) {
-            $viewFiles[] = $alias.' ('.trim(str_replace(base_path(), '', $view), '/').')';
+            $viewFiles[] = $alias.' ('.trim(str_replace(base_path() ?: '', '', $view), '/').')';
         }
 
         return $viewFiles;
@@ -1210,7 +1210,7 @@ class Handle
             return '';
         }
 
-        $basePath = base_path();
+        $basePath = base_path() ?: '';
 
         // 如果文件路径不包含基础路径，直接返回原路径
         if (!str_contains($file, $basePath)) {

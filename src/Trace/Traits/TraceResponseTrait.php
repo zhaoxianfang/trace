@@ -37,7 +37,7 @@ trait TraceResponseTrait
         }
 
         $editor = self::$editorConfig;
-        $fileName = $displayText ?? str_replace(base_path(), '', $file);
+        $fileName = $displayText ?? str_replace(base_path() ?: '', '', $file);
 
         return '<span class="json-label"><a href="'.$this->escapeHtml($editor).'://open?file='.urlencode($file).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>';
     }

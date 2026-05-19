@@ -67,17 +67,22 @@ html,body{height:100%;overflow:hidden}
 .trace-error-page h1{font-size:28px;color:#fff;margin-bottom:10px;font-weight:700;animation:fu .6s ease-out .15s both}
 .trace-error-page .ms{font-size:15px;color:rgba(255,255,255,0.65);margin-bottom:28px;line-height:1.7;animation:fu .6s ease-out .25s both}
 
-/* 按钮 */
-.trace-error-page .ac{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;animation:fu .6s ease-out .35s both}
-.trace-error-page .btn{padding:14px 30px;border-radius:14px;text-decoration:none;font-size:15px;font-weight:600;
-  transition:all .3s;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+/* 按钮 – 单行水平排列 */
+.trace-error-page .ac{display:flex;gap:10px;justify-content:center;flex-wrap:nowrap;animation:fu .6s ease-out .35s both;padding:4px 0}
+.trace-error-page .btn{padding:12px 24px;border-radius:14px;text-decoration:none;font-size:14px;font-weight:600;
+  transition:all .3s;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .trace-error-page .bp{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 4px 20px rgba(102,126,234,.35)}
 .trace-error-page .bp:hover{transform:translateY(-3px);box-shadow:0 8px 30px rgba(102,126,234,.5)}
 .trace-error-page .bs{background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.1)}
 .trace-error-page .bs:hover{background:rgba(255,255,255,.14);transform:translateY(-2px)}
 
+/* 技术支持提示 */
+.trace-error-page .tip{margin-top:16px;font-size:12px;color:rgba(255,255,255,.3);animation:fu .6s ease-out .4s both}
+.trace-error-page .tip a{color:#7f9cf5;text-decoration:none;transition:color .3s}
+.trace-error-page .tip a:hover{color:#a78bfa}
+
 /* 调试面板 */
-.trace-error-page .db{margin-top:28px;text-align:left;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.06);animation:fu .6s ease-out .5s both}
+.trace-error-page .db{margin-top:24px;text-align:left;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.06);animation:fu .6s ease-out .5s both}
 .trace-error-page .dh{background:rgba(102,126,234,.12);color:rgba(255,255,255,.85);padding:12px 20px;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;transition:background .3s}
 .trace-error-page .dh:hover{background:rgba(102,126,234,.2)}
 .trace-error-page .dh .to{transition:transform .3s}
@@ -93,7 +98,7 @@ html,body{height:100%;overflow:hidden}
 /* 元信息 */
 .trace-error-page .mt{margin-top:22px;padding-top:18px;border-top:1px solid rgba(255,255,255,.06);font-size:12px;color:rgba(255,255,255,.25);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;animation:fu .6s ease-out .55s both}
 .trace-error-page .mt span{display:inline-flex;align-items:center;gap:5px}
-@media(max-width:480px){.trace-error-page .bx{padding:30px 18px}.trace-error-page .cd{font-size:80px}.trace-error-page h1{font-size:22px}.trace-error-page .ac{flex-direction:column}.trace-error-page .btn{width:100%;justify-content:center}}
+@media(max-width:480px){.trace-error-page .bx{padding:30px 18px}.trace-error-page .cd{font-size:80px}.trace-error-page h1{font-size:22px}.trace-error-page .ac{flex-direction:row;gap:8px}.trace-error-page .btn{padding:10px 16px;font-size:13px}.trace-error-page .tip{margin-top:12px;font-size:11px}.trace-error-page .mt{flex-direction:column;gap:6px;text-align:center}}
 </style></head><body>
 <div class="trace-error-page">
   <div class="gl g1"></div><div class="gl g2"></div>
@@ -128,6 +133,7 @@ html,body{height:100%;overflow:hidden}
       <a href="{{url('/')}}" class="btn bp"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>返回首页</a>
       <button onclick="location.reload()" class="btn bs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>刷新</button>
     </div>
+    <div class="tip">技术支持：<a href="https://yoc.cn" target="_blank" rel="noopener">yoc.cn</a></div>
 
     @if($isDb && isset($list) && is_array($list))
     <div class="db">

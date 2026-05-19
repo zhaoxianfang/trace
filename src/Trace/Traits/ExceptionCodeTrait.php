@@ -112,8 +112,14 @@ trait ExceptionCodeTrait
         $code = empty($code) ? 500 : $code;
 
         return response()->json([
+            'success' => false,
             'code' => $code,
             'message' => $message,
+            'meta' => [
+                'request_id' => $this->generateRequestId(),
+                'timestamp' => now()->toIso8601String(),
+                'php' => PHP_VERSION,
+            ],
         ], $code);
     }
 
@@ -323,49 +329,73 @@ HTML;
     /**
      * 渲染纯文本错误响应（用于 CLI 或简单场景）
      *
+     * 与 bootstrap.php 的 _t_render() CLI 分支保持风格统一：
+     * - 结构化 ANSI 颜色输出
+     * - 背景高亮标题、▸ 字段列表、调试分区、分隔线
+     *
      * @param string $message 错误消息
      * @param int $code HTTP 状态码
      * @return \Illuminate\Http\Response
      */
     public function respText(string $message, int $code = 500): \Illuminate\Http\Response
     {
-        // CLI 模式添加 ANSI 颜色
         $isCli = PHP_SAPI === 'cli';
-        $red = $isCli ? "\033[1;31m" : '';
-        $yellow = $isCli ? "\033[1;33m" : '';
-        $cyan = $isCli ? "\033[0;36m" : '';
-        $reset = $isCli ? "\033[0m" : '';
+        $isDebug = config('app.debug', false);
 
-        $content = '';
+        // CLI 模式：结构化 ANSI 输出（与 bootstrap.php 风格统一）
         if ($isCli) {
-            $content .= "\n{$red}⚡ Trace Error Intercepted{$reset}\n";
-            $content .= "{$yellow}  [{$code}] {$message}{$reset}\n";
-            $content .= "  PHP: " . PHP_VERSION;
-            try { $content .= ' | Memory: ' . size_format(memory_get_usage(true)); } catch (\Throwable $e) {}
-            $content .= "\n";
+            $out = [];
+            $out[] = '';
+            $out[] = "  \033[48;5;196m\033[1;97m  ⚠ TRACE ERROR  \033[0m";
+            $out[] = '';
+            $out[] = "  \033[1;91m▸ Status:\033[0m  {$code}";
+            $out[] = "  \033[1;91m▸ Message:\033[0m {$message}";
+
+            if ($isDebug) {
+                $out[] = '';
+                $out[] = '  \033[0;90m── Debug ──\033[0m';
+                $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+                foreach ($trace as $i => $t) {
+                    $file = $t['file'] ?? 'unknown';
+                    $line = $t['line'] ?? 0;
+                    $out[] = "    #{$i} {$file}:{$line}";
+                }
+            }
+
+            $out[] = '';
+            $out[] = "  \033[0;90m  PHP:     \033[0m" . PHP_VERSION;
+            try {
+                $memUsage = memory_get_usage(true);
+                $memPeak  = memory_get_peak_usage(true);
+                // 安全调用 size_format，若不可用则回退到原生字节显示
+                if (function_exists('size_format')) {
+                    $out[] = "  \033[0;90m  Memory:  \033[0m" . size_format($memUsage) . ' (peak: ' . size_format($memPeak) . ')';
+                } else {
+                    $out[] = "  \033[0;90m  Memory:  \033[0m" . $memUsage . ' B (peak: ' . $memPeak . ' B)';
+                }
+            } catch (\Throwable) {}
+            $out[] = "  \033[0;90m  ID:      \033[0m" . $this->generateRequestId();
+            $out[] = "  \033[0;90m  Time:    \033[0m" . now()->format('Y-m-d H:i:s');
+            $out[] = '';
+            $out[] = "  \033[0;90m" . str_repeat('─', 50) . "\033[0m";
+            $out[] = '';
+
+            $content = implode("\n", $out);
         } else {
+            // Web 纯文本模式（极少使用，保持极简）
             $content = "Error {$code}: {$message}\n";
+            if ($isDebug) {
+                $content .= "\nStack Trace:\n";
+                $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+                foreach ($trace as $i => $t) {
+                    $file = $t['file'] ?? 'unknown';
+                    $line = $t['line'] ?? 0;
+                    $content .= "#{$i} {$file}:{$line}\n";
+                }
+            }
+            $content .= "\n";
         }
 
-        if ($isCli && config('app.debug')) {
-            $content .= "\n{$cyan}Stack Trace:{$reset}\n";
-            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
-            foreach ($trace as $i => $t) {
-                $file = $t['file'] ?? 'unknown';
-                $line = $t['line'] ?? 0;
-                $content .= "  #{$i} {$file}:{$line}\n";
-            }
-        } elseif (! $isCli && config('app.debug')) {
-            $content .= "\nStack Trace:\n";
-            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
-            foreach ($trace as $i => $t) {
-                $file = $t['file'] ?? 'unknown';
-                $line = $t['line'] ?? 0;
-                $content .= "#{$i} {$file}:{$line}\n";
-            }
-        }
-
-        $content .= "\n";
         return response($content, $code)
             ->header('Content-Type', 'text/plain; charset=utf-8');
     }

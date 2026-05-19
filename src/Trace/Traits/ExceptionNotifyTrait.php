@@ -19,7 +19,8 @@ trait ExceptionNotifyTrait
         $debugInfo = '';
 
         if (config('app.debug')) {
-            $errFile = htmlspecialchars(str_replace(base_path(), '', $e->getFile()).':'.$e->getLine().' (行)', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $basePath = base_path() ?: '';
+            $errFile = htmlspecialchars(str_replace($basePath, '', $e->getFile()).':'.$e->getLine().' (行)', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $debugInfo .= "<p>[异常提示]:</p>";
             $debugInfo .= "<p>➤ [异常文件]:{$errFile}</p>";
 

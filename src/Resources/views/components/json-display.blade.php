@@ -45,7 +45,7 @@ function render_json_node($data, $level = 0) {
         foreach ($data as $key => $value) {
             $html .= '<div class="trace-json-item">';
             if ($isAssoc) {
-                $html .= '<span class="trace-json-key">"' . htmlspecialchars($key) . '"</span><span class="trace-json-colon">: </span>';
+                $html .= '<span class="trace-json-key">"' . htmlspecialchars($key, ENT_QUOTES, 'UTF-8') . '"</span><span class="trace-json-colon">: </span>';
             }
             $html .= render_json_node($value, $level + 1);
             $html .= '</div>';
@@ -68,9 +68,9 @@ function render_json_value($value) {
     } elseif (is_numeric($value)) {
         return '<span class="trace-json-number">' . $value . '</span>';
     } elseif (is_string($value)) {
-        return '<span class="trace-json-string">"' . htmlspecialchars($value) . '"</span>';
+        return '<span class="trace-json-string">"' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"</span>';
     }
-    return '<span>' . htmlspecialchars((string)$value) . '</span>';
+    return '<span>' . htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8') . '</span>';
 }
 @endphp
 

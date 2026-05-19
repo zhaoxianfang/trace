@@ -299,7 +299,7 @@ trait ExceptionTrait
 
         // 安全检查：确保文件在允许的目录内（防止目录遍历）
         $realFilePath = realpath($filePath);
-        $basePath = realpath(base_path());
+        $basePath = realpath(base_path() ?: '');
         if ($realFilePath === false || $basePath === false || ! str_starts_with($realFilePath, $basePath)) {
             return false;
         }
@@ -400,7 +400,7 @@ trait ExceptionTrait
      */
     protected function getRelativePath(string $path): string
     {
-        $basePath = base_path();
+        $basePath = base_path() ?: '';
         if (str_starts_with($path, $basePath)) {
             return substr($path, strlen($basePath));
         }

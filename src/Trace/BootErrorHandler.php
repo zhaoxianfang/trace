@@ -54,6 +54,10 @@ class BootErrorHandler
      */
     private static function tryBladeRender(int $code, string $title, string $message, string $file, int $line, string $executionId): void
     {
+        // 临时关闭 PHP 错误显示，防止 Blade 渲染期间的弃用警告污染输出
+        @ini_set('display_errors', '0');
+        error_reporting(0);
+
         try {
             if (! function_exists('view') || ! function_exists('app')) {
                 return;
