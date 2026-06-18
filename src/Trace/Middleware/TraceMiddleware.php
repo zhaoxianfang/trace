@@ -57,6 +57,14 @@ class TraceMiddleware
         // 清理过期的请求跟踪（防止内存泄漏）
         $this->cleanupProcessedRequests();
 
+        // 仅在 trace 启用且 Handle 已注册时才获取实例
+        if (! is_enable_trace() || ! app()->bound('trace')) {
+            $this->handle = null;
+            $response = $next($request);
+            self::$processedRequests[$requestId] = time();
+            return $response;
+        }
+
         // 获取 Trace 处理器实例
         $this->handle = app('trace');
 
@@ -166,6 +174,11 @@ class TraceMiddleware
     public function terminate($request, $response)
     {
         try {
+            // 如果 trace 未启用或 handle 未初始化，跳过清理
+            if ($this->handle === null) {
+                return $response;
+            }
+
             // 获取请求对象 ID
             $requestId = spl_object_id($request);
 
@@ -173,14 +186,8 @@ class TraceMiddleware
             unset(self::$processedRequests[$requestId]);
 
             // 清理 TraceExceptionHandler 中的请求级别异常哈希
-            // 使用 Handle 类中的静态方法获取当前请求ID，避免反射开销
-            if (app()->bound('trace')) {
-                $trace = app('trace');
-                // 如果 trace 有获取请求ID的方法，使用它
-                if (method_exists($trace, 'getRequestId')) {
-                    $traceRequestId = $trace->getRequestId();
-                    TraceExceptionHandler::clearRequestExceptions($traceRequestId);
-                }
+            if ($this->handle->getRequestId()) {
+                TraceExceptionHandler::clearRequestExceptions($this->handle->getRequestId());
             }
 
         } catch (\Exception $e) {

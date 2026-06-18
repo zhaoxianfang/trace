@@ -70,6 +70,7 @@ trait ExceptionShowDebugHtmlTrait
                     $html = $view->make('trace::debug', [
                         'title' => $title,
                         'list' => $newList,
+                        'editor' => config('trace.editor') ?? 'phpstorm',
                     ])->render();
                     
                     $resp = response($html, $statusCode)->header('Content-Type', 'text/html');
@@ -87,8 +88,8 @@ trait ExceptionShowDebugHtmlTrait
             // 视图渲染失败，降级到内置模板
         }
 
-        // 降级：使用 emergency 视图
-        return $this->renderEmergencyView($title, $newList, $statusCode, $showTrace);
+        // 降级：使用 error 视图
+        return $this->renderErrorView($title, $newList, $statusCode, $showTrace);
     }
 
     /**
@@ -134,6 +135,11 @@ trait ExceptionShowDebugHtmlTrait
      */
     private function attachTraceToResponse($resp)
     {
+        // 如果 trace 未启用，直接返回响应，不注入调试信息
+        if (! is_enable_trace()) {
+            return $resp->send();
+        }
+
         try {
             /** @var \zxf\Trace\Handle $trace */
             $trace = app('trace');
@@ -168,6 +174,7 @@ trait ExceptionShowDebugHtmlTrait
                         'isDebug' => true,
                         'requestId' => $this->generateRequestId(),
                         'timestamp' => date('Y-m-d H:i:s'),
+                        'editor' => config('trace.editor') ?? 'phpstorm',
                     ])->render();
                     
                     $resp = response($html, $statusCode)->header('Content-Type', 'text/html');

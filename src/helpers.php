@@ -56,6 +56,11 @@ if (! function_exists('trace')) {
      */
     function trace(mixed ...$args): void
     {
+        // 如果 trace 未启用或服务未注册，直接跳过，不产生副作用
+        if (! is_enable_trace() || ! app()->bound('trace')) {
+            return;
+        }
+
         /** @var \zxf\Trace\Handle $trace */
         $trace = app('trace');
         foreach ($args as $value) {

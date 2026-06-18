@@ -273,6 +273,8 @@ class EmergencyRenderer
     /**
      * 尝试使用 Blade 视图渲染
      *
+     * 视图优先级：trace::error → trace::debug
+     *
      * @return bool 是否成功渲染
      */
     private static function tryRenderBladeView(array $errorInfo, int $code, bool $isDebug, string $publicMessage): bool
@@ -304,11 +306,6 @@ class EmergencyRenderer
                 }
             }
 
-            // 检查视图是否存在
-            if (!$view->exists('trace::error')) {
-                return false;
-            }
-
             // 准备视图数据
             $viewData = [
                 'code' => $code,
@@ -320,66 +317,79 @@ class EmergencyRenderer
             ];
 
             // 如果有异常对象，添加到视图数据
-            // 使用模拟异常对象来传递调试信息
             if ($isDebug) {
-                $viewData['exception'] = new class($errorInfo) extends \Exception {
-                    private array $info;
-
-                    public function __construct(array $info)
-                    {
-                        // 使用 ReflectionClass 来设置 protected 属性
-                        parent::__construct($info['message'], $info['code']);
-                        $this->info = $info;
-
-                        // 使用反射设置 file 和 line
-                        // PHP 8.1+ setAccessible() 默认为 true，无需调用
-                        try {
-                            $reflection = new \ReflectionClass(\Exception::class);
-
-                            $fileProp = $reflection->getProperty('file');
-                            if (PHP_VERSION_ID < 80100) {
-                                $fileProp->setAccessible(true);
-                            }
-                            $fileProp->setValue($this, $info['file'] ?? '');
-
-                            $lineProp = $reflection->getProperty('line');
-                            if (PHP_VERSION_ID < 80100) {
-                                $lineProp->setAccessible(true);
-                            }
-                            $lineProp->setValue($this, $info['line'] ?? 0);
-
-                            // trace 是字符串，需要转换为数组
-                            $traceString = $info['trace'] ?? '';
-                            $trace = [];
-                            if (!empty($traceString)) {
-                                $lines = explode("\n", $traceString);
-                                foreach ($lines as $line) {
-                                    if (preg_match('/^#(\d+)\s+(.+)$/', $line, $matches)) {
-                                        $trace[] = ['file' => $matches[2], 'line' => 0, 'function' => '', 'class' => ''];
-                                    }
-                                }
-                            }
-
-                            $traceProp = $reflection->getProperty('trace');
-                            if (PHP_VERSION_ID < 80100) {
-                                $traceProp->setAccessible(true);
-                            }
-                            $traceProp->setValue($this, $trace);
-                        } catch (\Throwable $e) {
-                            // 反射失败，忽略
-                        }
-                    }
-                };
+                $viewData['exception'] = self::buildDebugException($errorInfo);
             }
 
-            // 渲染视图
-            echo $view->make('trace::error', $viewData)->render();
-            return true;
+            // 按优先级尝试可用视图
+            $viewPriority = ['trace::error', 'trace::debug'];
+            foreach ($viewPriority as $viewName) {
+                if ($view->exists($viewName)) {
+                    echo $view->make($viewName, $viewData)->render();
+                    return true;
+                }
+            }
+
+            return false;
 
         } catch (\Throwable $e) {
             // Blade 渲染失败，返回 false 让调用方使用内联模板
             return false;
         }
+    }
+
+    /**
+     * 构建用于 Blade 视图的模拟异常对象
+     *
+     * @param array $errorInfo
+     * @return \Exception
+     */
+    private static function buildDebugException(array $errorInfo): \Exception
+    {
+        return new class($errorInfo) extends \Exception {
+            private array $info;
+
+            public function __construct(array $info)
+            {
+                parent::__construct($info['message'], $info['code']);
+                $this->info = $info;
+
+                try {
+                    $reflection = new \ReflectionClass(\Exception::class);
+
+                    $fileProp = $reflection->getProperty('file');
+                    if (PHP_VERSION_ID < 80100) {
+                        $fileProp->setAccessible(true);
+                    }
+                    $fileProp->setValue($this, $info['file'] ?? '');
+
+                    $lineProp = $reflection->getProperty('line');
+                    if (PHP_VERSION_ID < 80100) {
+                        $lineProp->setAccessible(true);
+                    }
+                    $lineProp->setValue($this, $info['line'] ?? 0);
+
+                    $traceString = $info['trace'] ?? '';
+                    $trace = [];
+                    if (!empty($traceString)) {
+                        $lines = explode("\n", $traceString);
+                        foreach ($lines as $line) {
+                            if (preg_match('/^#(\d+)\s+(.+)$/', $line, $matches)) {
+                                $trace[] = ['file' => $matches[2], 'line' => 0, 'function' => '', 'class' => ''];
+                            }
+                        }
+                    }
+
+                    $traceProp = $reflection->getProperty('trace');
+                    if (PHP_VERSION_ID < 80100) {
+                        $traceProp->setAccessible(true);
+                    }
+                    $traceProp->setValue($this, $trace);
+                } catch (\Throwable $e) {
+                    // 反射失败，忽略
+                }
+            }
+        };
     }
 
     /**
@@ -509,13 +519,16 @@ HTML;
                     }
                 }
 
-                if ($view->exists('trace::errors.minimal')) {
-                    echo $view->make('trace::errors.minimal', [
-                        'code' => $code,
-                        'title' => $title,
-                        'message' => $safeMessage,
-                    ])->render();
-                    return;
+                // 优先尝试 error 视图，其次 debug 视图
+                foreach (['trace::error', 'trace::debug'] as $viewName) {
+                    if ($view->exists($viewName)) {
+                        echo $view->make($viewName, [
+                            'code' => $code,
+                            'title' => $title,
+                            'message' => $safeMessage,
+                        ])->render();
+                        return;
+                    }
                 }
             }
         } catch (\Throwable $e) {
@@ -721,25 +734,61 @@ HTML;
     /**
      * 尝试将日志写入文件（多种路径）
      *
+     * 优先级：
+     * 1. Laravel storage_path() 函数（如果可用）
+     * 2. 通过 vendor 路径反推项目根目录
+     * 3. 通过 $_SERVER/环境变量/当前工作目录检测
+     * 4. 系统临时目录（兜底）
+     *
      * @param string $logMessage
      * @return void
      */
     private static function writeToLogFile(string $logMessage): void
     {
-        // 尝试多个可能的日志目录路径
-        $possibleLogDirs = [
-            __DIR__ . '/../../../storage/logs',      // 标准 Laravel 路径
-            __DIR__ . '/../../../../storage/logs',   // 备用路径
-            __DIR__ . '/../../logs',                 // 包内路径
-            sys_get_temp_dir() . '/trace-logs',      // 系统临时目录
-        ];
+        $possibleLogDirs = [];
+
+        // 1. 尝试使用 Laravel 的 storage_path() 函数
+        try {
+            if (function_exists('storage_path')) {
+                $storageLogs = storage_path('logs');
+                if ($storageLogs) {
+                    $possibleLogDirs[] = $storageLogs;
+                }
+            }
+        } catch (\Throwable $e) {
+            // storage_path() 不可用
+        }
+
+        // 2. 通过 Composer vendor 路径反推项目根目录（最可靠的方式）
+        $projectBasePath = self::detectProjectBasePath();
+        if ($projectBasePath) {
+            $possibleLogDirs[] = $projectBasePath . '/storage/logs';
+        }
+
+        // 3. 标准 vendor 相对路径尝试
+        $possibleLogDirs[] = __DIR__ . '/../../../storage/logs';      // vendor/zxf/trace/src/Trace/ -> 项目根
+        $possibleLogDirs[] = __DIR__ . '/../../../../storage/logs';   // 备用：vendor/zxf/trace/src/ -> 项目根
+
+        // 4. 包内路径（fallback）
+        $possibleLogDirs[] = __DIR__ . '/../../logs';
+
+        // 5. 系统临时目录（兜底）
+        $possibleLogDirs[] = sys_get_temp_dir() . '/trace-logs';
+
+        // 去重
+        $possibleLogDirs = array_unique($possibleLogDirs);
 
         foreach ($possibleLogDirs as $logDir) {
             try {
+                // 验证路径合法性
+                if (empty($logDir) || strlen($logDir) < 3) {
+                    continue;
+                }
+
                 if (!is_dir($logDir)) {
                     @mkdir($logDir, 0755, true);
                 }
-                
+
                 if (is_dir($logDir) && is_writable($logDir)) {
                     $logFile = $logDir . '/emergency-' . date('Y-m-d') . '.log';
                     $result = @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
@@ -752,5 +801,76 @@ HTML;
                 continue;
             }
         }
+    }
+
+    /**
+     * 检测 Laravel 项目根目录
+     *
+     * 通过多种方式智能检测项目根目录：
+     * 1. 环境变量 APP_BASE_PATH
+     * 2. $_SERVER 变量
+     * 3. 通过 vendor 目录路径反推
+     * 4. 查找 artisan 文件
+     *
+     * @return string|null 项目根目录路径，或 null 表示未找到
+     */
+    private static function detectProjectBasePath(): ?string
+    {
+        // 1. 检查 APP_BASE_PATH 环境变量
+        $basePath = $_ENV['APP_BASE_PATH'] ?? $_SERVER['APP_BASE_PATH'] ?? getenv('APP_BASE_PATH');
+        if ($basePath && is_string($basePath) && is_dir($basePath)) {
+            return rtrim($basePath, '/');
+        }
+
+        // 2. 检查 LARAVEL_BASE_PATH 常量或环境变量
+        $laravelBase = $_ENV['LARAVEL_BASE_PATH'] ?? $_SERVER['LARAVEL_BASE_PATH'] ?? getenv('LARAVEL_BASE_PATH') ?? null;
+        if ($laravelBase && is_string($laravelBase) && is_dir($laravelBase)) {
+            return rtrim($laravelBase, '/');
+        }
+
+        // 3. 搜索项目根目录（通过查找 artisan 文件）
+        // 从当前包目录向上最多 10 层查找
+        $currentDir = __DIR__;
+        $maxDepth = 10;
+        for ($i = 0; $i < $maxDepth; $i++) {
+            if (file_exists($currentDir . '/artisan') && file_exists($currentDir . '/composer.json')) {
+                return $currentDir;
+            }
+            $parentDir = dirname($currentDir);
+            if ($parentDir === $currentDir) {
+                break; // 已到达文件系统根目录
+            }
+            $currentDir = $parentDir;
+        }
+
+        // 4. 尝试从 $_SERVER 获取
+        $docRoot = $_SERVER['DOCUMENT_ROOT'] ?? null;
+        if ($docRoot && is_string($docRoot)) {
+            // 检查 DOCUMENT_ROOT 的父目录（常见于 Laravel 的 public/ 子目录部署）
+            $parentDocRoot = dirname($docRoot);
+            if (file_exists($parentDocRoot . '/artisan')) {
+                return $parentDocRoot;
+            }
+        }
+
+        // 5. 尝试 getcwd()（当前工作目录）
+        try {
+            $cwd = getcwd();
+            if ($cwd) {
+                // 检查当前目录
+                if (file_exists($cwd . '/artisan')) {
+                    return $cwd;
+                }
+                // 检查父目录（如从 public/ 子目录启动）
+                $parentCwd = dirname($cwd);
+                if (file_exists($parentCwd . '/artisan')) {
+                    return $parentCwd;
+                }
+            }
+        } catch (\Throwable $e) {
+            // getcwd() 可能在某些环境下失败
+        }
+
+        return null;
     }
 }

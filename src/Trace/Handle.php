@@ -6,22 +6,21 @@ use Closure;
 use Exception;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Foundation\Application;
-use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Router;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Event;
 use ParseError;
-use ReflectionException;
-use ReflectionFunction;
-use ReflectionMethod;
 use Throwable;
 use zxf\Trace\Traits\AppEndTrait;
 use zxf\Trace\Traits\ExceptionCustomCallbackTrait;
 use zxf\Trace\Traits\ExceptionShowDebugHtmlTrait;
 use zxf\Trace\Traits\ExceptionTrait;
+use zxf\Trace\Traits\InfoCollectorTrait;
+use zxf\Trace\Traits\ModelCollectorTrait;
+use zxf\Trace\Traits\RouteCollectorTrait;
+use zxf\Trace\Traits\SqlCollectorTrait;
 use zxf\Trace\Traits\TraceResponseTrait;
+use zxf\Trace\Traits\ViewCollectorTrait;
 
 /**
  * Trace 调试处理器
@@ -57,6 +56,13 @@ class Handle
     use ExceptionShowDebugHtmlTrait {
         ExceptionShowDebugHtmlTrait::generateRequestId as generateRequestIdFromHtmlTrait;
     }
+    // 数据收集 Traits
+    use SqlCollectorTrait;
+    use ModelCollectorTrait;
+    use ViewCollectorTrait;
+    use RouteCollectorTrait;
+    use InfoCollectorTrait;
+    // 渲染 Trait
     use TraceResponseTrait;
 
     /**
@@ -123,6 +129,12 @@ class Handle
     // 请求计数器，用于追踪请求次数
     protected static int $requestCounter = 0;
 
+    // 视图数据收集：按请求ID存储每个视图的详细信息（路径 + 参数）
+    protected static array $viewDataCollector = [];
+
+    // 模型事件类型标记：区分 DB查询 / 关联引用 / 写操作
+    protected static array $modelEventTypes = [];
+
     /**
      * 实例化并初始化请求级别状态
      *
@@ -140,12 +152,14 @@ class Handle
         self::$currentRequestId = $this->requestId;
         self::$requestCounter++;
 
-        // 从配置读取限制值（使用静态属性避免重复读取）
-        $this->loadConfigLimits();
-
+        // 提前检查：如果 trace 未启用，跳过所有调试收集初始化
+        // 仅在请求开始时做一次判断，避免重复调用 is_enable_trace()
         if (! is_enable_trace()) {
             return;
         }
+
+        // 从配置读取限制值
+        $this->loadConfigLimits();
 
         $this->startMemory = memory_get_usage();
 
@@ -163,14 +177,11 @@ class Handle
 
         $this->listenModelEvent();
         $this->listenSql();
+        $this->listenViewComposing();
     }
 
     /**
      * 加载配置中的限制值
-     *
-     * 注意：直接从配置读取，不使用缓存，确保配置实时生效
-     *
-     * @return void
      */
     protected function loadConfigLimits(): void
     {
@@ -182,8 +193,6 @@ class Handle
 
     /**
      * 获取当前请求ID
-     *
-     * @return string|null
      */
     public function getRequestId(): ?string
     {
@@ -192,17 +201,13 @@ class Handle
 
     /**
      * 获取请求开始时间
-     *
-     * @return float
      */
     protected function getStartTime(): float
     {
-        // 尝试从服务器变量获取
         if (isset($_SERVER['REQUEST_TIME_FLOAT'])) {
             return $_SERVER['REQUEST_TIME_FLOAT'];
         }
 
-        // 尝试从应用容器获取
         if (isset($this->app['request'])) {
             $time = $this->app['request']->server('REQUEST_TIME_FLOAT');
             if ($time !== null) {
@@ -210,384 +215,25 @@ class Handle
             }
         }
 
-        // 回退到 LARAVEL_START 常量
         if (defined('LARAVEL_START')) {
             return LARAVEL_START;
         }
 
-        // 最后回退到当前时间
         return microtime(true);
-    }
-
-    /**
-     * 监听模型事件
-     *
-     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
-     * 监听 CURD 操作（创建、更新、删除）和数据查询操作
-     */
-    public function listenModelEvent(): void
-    {
-        // 检查是否已经注册过事件监听器
-        if (self::$eventListenersRegistered) {
-            return;
-        }
-
-        // 检查 Event 类是否可用
-        if (!class_exists(Event::class)) {
-            return;
-        }
-
-        // 监听模型相关事件
-        $modelEvents = [
-            'retrieved', // 数据查询
-            'creating',  // 正在创建
-            'created',   // 创建完成
-            'updating',  // 正在更新
-            'updated',   // 更新完成
-            'deleting',  // 正在删除
-            'deleted',   // 删除完成
-            'saving',    // 保存中
-            'saved',     // 保存完成
-        ];
-
-        foreach ($modelEvents as $event) {
-            try {
-                Event::listen('eloquent.'.$event.':*', function ($listenString, $model) use ($event) {
-                    // 只在当前请求 ID 匹配时才记录
-                    if (self::$currentRequestId === $this->requestId) {
-                        $this->logModelEvent($listenString, $model, $event);
-                    }
-                });
-            } catch (\Throwable $e) {
-                // 记录监听器注册失败，但不中断流程
-                if (config('app.debug', false)) {
-                    error_log('[Trace] 模型事件监听注册失败: ' . $e->getMessage());
-                }
-            }
-        }
-    }
-
-    /**
-     * 监听 SQL事件
-     *
-     * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
-     *
-     * @return void
-     */
-    protected function listenSql(): void
-    {
-        // 检查是否已经注册过事件监听器
-        if (self::$eventListenersRegistered) {
-            return;
-        }
-
-        $events = $this->app['events'] ?? null;
-        if (! $events) {
-            return;
-        }
-
-        try {
-            // 监听SQL执行
-            $events->listen(function (QueryExecuted $query) {
-                // 只在当前请求 ID 匹配时才记录
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addQuery($query);
-                }
-            });
-        } catch (Exception $e) {
-            if (config('app.debug', false)) {
-                error_log('[Trace] SQL监听错误: ' . $e->getMessage());
-            }
-        }
-
-        try {
-            // 监听事务相关事件
-            $this->registerTransactionListeners($events);
-        } catch (Exception $e) {
-            if (config('app.debug', false)) {
-                error_log('[Trace] 事务监听错误: ' . $e->getMessage());
-            }
-        }
-
-        // 标记事件监听器已注册
-        self::$eventListenersRegistered = true;
-    }
-
-    /**
-     * 注册事务相关事件监听器
-     *
-     * @param mixed $events 事件调度器
-     * @return void
-     */
-    protected function registerTransactionListeners($events): void
-    {
-        // 监听事务开始
-        $events->listen(\Illuminate\Database\Events\TransactionBeginning::class, function ($transaction) {
-            if (self::$currentRequestId === $this->requestId) {
-                $this->addTransactionQuery('Begin Transaction', $transaction->connection);
-            }
-        });
-
-        // 监听事务提交
-        $events->listen(\Illuminate\Database\Events\TransactionCommitted::class, function ($transaction) {
-            if (self::$currentRequestId === $this->requestId) {
-                $this->addTransactionQuery('Commit Transaction', $transaction->connection);
-            }
-        });
-
-        // 监听事务回滚
-        $events->listen(\Illuminate\Database\Events\TransactionRolledBack::class, function ($transaction) {
-            if (self::$currentRequestId === $this->requestId) {
-                $this->addTransactionQuery('Rollback Transaction', $transaction->connection);
-            }
-        });
-
-        // 连接事件映射
-        $connectionEvents = [
-            'beganTransaction' => 'Begin Transaction',
-            'committed' => 'Commit Transaction',
-            'rollingBack' => 'Rollback Transaction',
-        ];
-
-        foreach ($connectionEvents as $event => $eventName) {
-            $events->listen('connection.*.'.$event, function ($event, $params) use ($eventName) {
-                if (self::$currentRequestId === $this->requestId) {
-                    $this->addTransactionQuery($eventName, $params[0] ?? null);
-                }
-            });
-        }
-
-        // 监听连接创建
-        $events->listen(\Illuminate\Database\Events\ConnectionEstablished::class, function ($event) {
-            if (self::$currentRequestId === $this->requestId) {
-                $this->addTransactionQuery('Connection Established', $event->connection);
-            }
-        });
-    }
-
-    /**
-     * 记录sql
-     *
-     * @param  QueryExecuted  $event
-     */
-    private function addQuery(QueryExecuted $event): void
-    {
-        try {
-            // 检查 SQL 列表大小限制
-            if (count($this->sqlList) >= $this->maxSqlListSize) {
-                // 如果超过限制，移除最早的条目
-                array_shift($this->sqlList);
-            }
-
-            // 获取绑定的参数
-            $bindings = $event->bindings ?? [];
-            $sql = $event->sql ?? '';
-
-            // 安全检查：确保 SQL 不为空
-            if (empty($sql)) {
-                return;
-            }
-
-            // 限制最大绑定参数数量，防止性能问题
-            if (count($bindings) > $this->maxBindings) {
-                $bindings = array_slice($bindings, 0, $this->maxBindings);
-            }
-
-            // 替换参数占位符 - 使用性能更好的方法
-            $sql = $this->replaceBindings($sql, $bindings);
-
-            // 限制SQL长度，避免内存溢出
-            if (strlen($sql) > $this->maxSqlLength) {
-                $sql = substr($sql, 0, $this->maxSqlLength) . '... [TRUNCATED]';
-            }
-
-            $this->sqlList[] = [
-                'sql' => $sql,
-                'type' => 'Query',
-                'time' => $event->time ?? 0, // 'ms'
-            ];
-        } catch (\Throwable $e) {
-            if (config('app.debug', false)) {
-                error_log('[Trace] SQL记录错误: ' . $e->getMessage());
-            }
-        }
-    }
-
-    /**
-     * 替换 SQL 中的参数占位符
-     * 使用 strpos + substr_replace 代替 preg_replace，提升性能
-     *
-     * 安全说明：
-     * 1. 本方法仅用于调试展示，不执行实际查询
-     * 2. 使用 PDO quote 进行参数转义
-     * 3. 限制字符串长度防止内存溢出
-     *
-     * @param  string  $sql SQL 语句
-     * @param  array  $bindings 绑定的参数
-     * @return string 替换后的 SQL
-     */
-    private function replaceBindings(string $sql, array $bindings): string
-    {
-        // 限制最大绑定参数数量，防止性能问题（使用配置值或默认1000）
-        $maxBindings = 1000;
-        $bindingCount = count($bindings);
-        
-        if ($bindingCount > $maxBindings) {
-            $bindings = array_slice($bindings, 0, $maxBindings);
-            $bindingCount = $maxBindings;
-        }
-
-        // 性能优化：预分配字符串缓冲区，减少内存重新分配
-        $offset = 0;
-        $result = $sql;
-        
-        for ($i = 0; $i < $bindingCount; $i++) {
-            $pos = strpos($result, '?', $offset);
-            if ($pos === false) {
-                break;
-            }
-            $bindingValue = $this->convertBindingToString($bindings[$i]);
-            $result = substr_replace($result, $bindingValue, $pos, 1);
-            // 更新偏移量，避免重复查找已替换的部分
-            $offset = $pos + strlen($bindingValue);
-        }
-        
-        return $result;
-    }
-
-    /**
-     * 将绑定的参数值转换为SQL字符串
-     *
-     * @param  mixed  $binding
-     * @return string
-     */
-    private function convertBindingToString($binding): string
-    {
-        if (is_null($binding)) {
-            return 'NULL';
-        }
-
-        if (is_bool($binding)) {
-            return $binding ? 'true' : 'false';
-        }
-
-        if (is_string($binding)) {
-            // 限制字符串长度防止内存溢出
-            if (strlen($binding) > 1000) {
-                $binding = substr($binding, 0, 1000) . '... [TRUNCATED]';
-            }
-            // 使用PDO的quote方法进行更安全的转义
-            try {
-                $pdo = DB::getPdo();
-                if ($pdo) {
-                    return $pdo->quote($binding);
-                }
-            } catch (\Throwable $e) {
-                // PDO不可用时的回退方案
-            }
-            // 回退到基本转义
-            $binding = str_replace("'", "''", $binding);
-            return "'{$binding}'";
-        }
-
-        if (is_numeric($binding)) {
-            return (string) $binding;
-        }
-
-        if (is_array($binding)) {
-            return json_encode($binding, JSON_UNESCAPED_UNICODE);
-        }
-
-        if (is_object($binding)) {
-            if (method_exists($binding, '__toString')) {
-                return "'" . str_replace("'", "''", (string) $binding) . "'";
-            }
-            return "'" . get_class($binding) . "'";
-        }
-
-        // 其他类型转换为字符串并转义
-        return "'" . str_replace("'", "''", (string) $binding) . "'";
-    }
-
-    /**
-     * 记录事务sql
-     *
-     * @param  string  $event
-     * @param  \Illuminate\Database\Connection  $connection
-     * @return void
-     */
-    private function addTransactionQuery(string $event, $connection): void
-    {
-        try {
-            if (! $connection) {
-                return;
-            }
-
-            $connectionName = method_exists($connection, 'getName') ? $connection->getName() : 'unknown';
-            $driver = method_exists($connection, 'getConfig') ? ($connection->getConfig('driver') ?? 'unknown') : 'unknown';
-
-            $this->sqlList[] = [
-                'sql' => '['.$connectionName.':'.$driver.'] '.$event,
-                'type' => 'Transaction',
-                'time' => 0,
-                //                 'connection' => $connection->getName(),
-                // 'driver'     => $connection->getConfig('driver'),
-            ];
-        } catch (\Throwable $e) {
-            if (config('app.debug', false)) {
-                error_log('[Trace] 事务查询错误: ' . $e->getMessage());
-            }
-        }
-    }
-
-    /**
-     * 记录模型事件
-     *
-     * 注意：使用请求 ID 进行数据隔离，防止不同请求的数据混淆
-     *
-     * @param  string  $listenString  监听字符串（如 "eloquent.retrieved:App\Models\User"）
-     * @param  mixed  $model  模型实例或模型数组
-     * @param  string  $event  事件名称（如 "retrieved", "created"）
-     */
-    protected function logModelEvent($listenString, $model, $event): void
-    {
-        // 检查当前请求 ID 是否匹配，防止跨请求事件混入
-        if (self::$currentRequestId !== $this->requestId) {
-            return;
-        }
-
-        $model = is_array($model) && isset($model[0]) ? $model[0] : $model;
-
-        // 使用: 分割 $model , 获取模型名称
-        $modelName = trim(explode(':', $listenString)[1]);
-
-        $modelId = $model->getKey();
-
-        // 使用请求 ID 作为键，避免不同请求的数据混淆
-        self::$modelList[$this->requestId] ??= [];
-        self::$modelList[$this->requestId][] = [
-            'model' => $modelName,
-            'id' => $modelId,
-            'event' => $event,
-        ];
     }
 
     /**
      * 输出 Trace 调试信息
      *
-     * 注意：添加请求级别检查，确保只处理当前请求的数据
-     *
      * @param  Response  $response  HTTP 响应对象
-     * @return string Trace 调试 HTML 内容（如果需要渲染）
+     * @return string Trace 调试 HTML 内容
      */
     public function output($response): string
     {
         if (! is_enable_trace()) {
-            // 运行在命令行下
             return '';
         }
 
-        // 检查当前请求 ID 是否匹配
         if (self::$currentRequestId !== $this->requestId) {
             return '';
         }
@@ -595,23 +241,16 @@ class Handle
         $this->response = $response;
 
         $exception = [];
-        $hasParseError = false; // 判断是否有语法错误
+        $hasParseError = false;
 
-        // 获取异常对象：优先从当前实例获取，其次从响应对象获取，最后检查静态属性
+        // 获取异常对象
         $exceptionObj = null;
 
-        // 首先检查 Handle 实例中存储的异常（通过 initError 方法设置）
         if ($this->currentException instanceof Throwable) {
             $exceptionObj = $this->currentException;
-        }
-        // 其次检查响应对象中的异常属性
-        elseif (property_exists($response, 'exception') && ! empty($response->exception)) {
+        } elseif (property_exists($response, 'exception') && ! empty($response->exception)) {
             $exceptionObj = $response->exception;
-        }
-        // 最后检查 ExceptionTrait 静态属性（兼容性回退）
-        elseif (self::$initErr && ! empty(self::$message)) {
-            // 从 ExceptionTrait 的静态属性中重建异常信息
-            // 注意：这里我们无法获取完整的异常对象，只能获取已处理的信息
+        } elseif (self::$initErr && ! empty(self::$message)) {
             $fileName = self::$content['file:'] ?? '';
             $line = self::$content['line:'] ?? 0;
             $code = self::$content['code:'] ?? 500;
@@ -622,36 +261,33 @@ class Handle
             $exception = [
                 'message' => $message,
                 'line' => $line,
-                // 使用 raw_html 标记，告诉视图这是安全的 HTML
                 'exception' => [
                     'raw_html' => true,
                     'content' => $exceptionContent,
                 ],
                 'file' => [
                     'raw_html' => true,
-                    'content' => '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($fileName).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>',
+                    'content' => '<span class="json-string-content" style="font-size:13px;"><a href="' . $editor . '://open?file=' . urlencode($fileName) . '&amp;line=' . $line . '" class="phpdebugbar-link">' . $this->getFilePath($fileName) . '#' . $line . '</a></span>',
                 ],
                 'code' => $code,
             ];
         }
 
-        // 如果有异常对象，则构建异常信息数组
         if ($exceptionObj instanceof Throwable) {
-            $hasParseError = $exceptionObj instanceof ParseError; // 判断是否有语法错误
+            $hasParseError = $exceptionObj instanceof ParseError;
             $exceptionString = $this->getExceptionContent($exceptionObj);
             $fileName = $this->getFilePath($exceptionObj->getFile());
             $editor = config('trace.editor') ?? 'phpstorm';
             $exception = [
                 'message' => $exceptionObj->getMessage(),
                 'line' => $exceptionObj->getLine(),
-                // 使用 raw_html 标记，告诉视图这是安全的 HTML
                 'exception' => [
                     'raw_html' => true,
                     'content' => $exceptionString,
                 ],
                 'file' => [
                     'raw_html' => true,
-                    'content' => '<span class="json-label"><a href="'.$editor.'://open?file='.urlencode($exceptionObj->getFile()).'&amp;line='.$exceptionObj->getLine().'" class="phpdebugbar-link">'.($fileName.'#'.$exceptionObj->getLine()).'</a></span>',
+                    'content' => '<span class="json-string-content" style="font-size:13px;"><a href="' . $editor . '://open?file=' . urlencode($exceptionObj->getFile()) . '&amp;line=' . $exceptionObj->getLine() . '" class="phpdebugbar-link">' . ($fileName . '#' . $exceptionObj->getLine()) . '</a></span>',
                 ],
                 'code' => $exceptionObj->getCode(),
             ];
@@ -674,22 +310,18 @@ class Handle
             foreach ($$name as $subTitle => $item) {
                 $result[$subTitle] = $item;
             }
-            // 显示数字提示
-            $showTips = in_array($name, ['messages', 'sql', 'models']) && ! empty($result) ? ' ('.count($result).')' : '';
+            $showTips = in_array($name, ['messages', 'sql', 'models']) && ! empty($result) ? ' (' . count($result) . ')' : '';
             $showTips = in_array($name, ['exception']) && ! empty($result) ? ' 🔴' : $showTips;
 
-            $trace[$title.$showTips] = ! empty($result) ? $result : $this->getEmptyTips($name);
+            $trace[$title . $showTips] = ! empty($result) ? $result : $this->getEmptyTips($name);
         }
 
         try {
-            // 自定义处理
             $this->traceEndHandle($trace);
         } catch (Exception $e) {
             return '';
         }
 
-        // 不是ajax请求的GET请求 && 不是生产环境 的直接在页面渲染
-        // 注意：使用 $this->request 而不是 request()，避免全局 request 可能不可用
         if ($this->request->isMethod('get') && ! $this->request->expectsJson() && ! ($response instanceof \Illuminate\Http\JsonResponse) && ! $this->app->environment('production')) {
             return $this->randerPage($trace);
         }
@@ -699,471 +331,28 @@ class Handle
 
     /**
      * 获取空状态下的tab提示信息
-     *
-     * @param string|null $tabName 标签名称，如 'messages', 'sql', 'view', 'exception' 等
-     * @return array 包含提示信息的数组，格式: ['提示消息', '额外提示']
-     *
-     * @throws \InvalidArgumentException 当标签名称无效时抛出（可选）
      */
     private function getEmptyTips(?string $tabName = ''): array
     {
         [$message, $tips] = match (strtolower($tabName)) {
             'messages' => ['暂无调试内容', '可使用 trace(mixed ...$args) 函数进行调试'],
-            'sql' => ['暂无sql查询', ''],
-            'view' => ['没有加载视图', ''],
+            'sql' => ['暂无 SQL 查询', '执行数据库操作后将在此显示'],
+            'view' => ['没有加载视图', '加载 Blade 视图后将在此显示'],
             'exception' => ['暂无异常信息', ''],
+            'models' => ['暂无模型操作记录', 'Eloquent 模型操作将在此显示'],
+            'route' => ['暂无路由信息', ''],
+            'base' => ['暂无基础信息', ''],
+            'session' => ['暂无会话信息', ''],
             default => ['暂无内容', ''],
         };
 
-        // 返回数组格式，视图层会使用 {!! !!} 渲染 HTML
-        if (! empty($tips)) {
-            return [
+        return [
+            [
+                'is_empty_tips' => true,
                 'message' => $message,
                 'tips' => $tips,
-                'is_empty_tips' => true,
-            ];
-        }
-
-        return [$message];
-    }
-
-    /**
-     * 获取模型列表并清理数据
-     *
-     * 注意：在获取数据后立即清理当前请求的模型数据，避免内存累积
-     *
-     * @return array 模型使用统计列表
-     */
-    private function getModelList(): array
-    {
-        $data = [];
-
-        // 只获取当前请求的模型列表
-        $currentModels = self::$modelList[$this->requestId] ?? [];
-
-        foreach ($currentModels as $model) {
-            $key = $model['model'].':'.$model['id'];
-            if (empty($data[$key])) {
-                $data[$key] = 1;
-            } else {
-                $data[$key] += 1;
-            }
-        }
-
-        $list = [];
-        foreach ($data as $model => $num) {
-            $list[] = $model.' 「'.$num.'次」';
-        }
-
-        // 清理当前请求的数据，避免内存泄漏
-        unset(self::$modelList[$this->requestId]);
-
-        return $list;
-    }
-
-    private function getBaseInfo($sqlTimes = 0): array
-    {
-        // 获取基本信息 - 使用普通运算符提高性能
-        $runtime = round(microtime(true) - $this->startTime, 3);
-        $reqs = $runtime > 0 ? number_format(1 / $runtime, 2) : '∞';
-        $base = [
-            '请求信息' => $this->request->method().' '.$this->request->fullUrl(),
-            '运行时间' => $runtime.'秒',
-            '吞吐率' => $reqs.' req/s',
-            '内存消耗' => size_format(memory_get_usage() - $this->startMemory),
-            '查询时间' => $sqlTimes.'秒',
-        ];
-
-        try {
-            if ($this->request->session()) {
-                $base['会话信息'] = 'SESSION_ID='.$this->request->session()->getId();
-            }
-        } catch (Exception $e) {
-            $base['会话信息'] = 'SESSION_ID=';
-        }
-
-        $base['PHP Version'] = phpversion();
-        $base['Laravel Version'] = $this->app->version();
-        $base['Environment'] = $this->app->environment();
-        $base['Locale'] = $this->app->getLocale();
-
-        // DB 数据库连接信息
-        try {
-            $dbConfig = DB::connection()->getConfig();
-            $username = $dbConfig['username'] ?? '-';
-
-            $base['DB Driver'] = ($dbConfig['driver'] ?? '-').'('.$this->maskIP($dbConfig['host'] ?? '-').') '.($dbConfig['charset'] ?? '-');
-            $base['DB Connect'] = ($dbConfig['database'] ?? '-').'('.substr($username, 0, 2).'***'.substr($username, -2).')';
-        } catch (Exception $e) {
-            $base['DB Driver'] = '-';
-            $base['DB Connect'] = '-';
-        }
-
-        // 操作系统名称
-        $osName = php_uname('s');
-        $friendlyOsName = match (strtoupper($osName)) {
-            'DARWIN' => 'macOS',
-            'LINUX' => 'Linux',
-            'WINDOWS NT' => 'Windows',
-            default => $osName,
-        };
-
-        $base['OS'] = $friendlyOsName.' v'.php_uname('r').' '.php_uname('m');
-
-        // 磁盘空间信息（仅非 Windows 系统）
-        if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
-            try {
-                $directoryPath = '/';
-                $totalSpace = disk_total_space($directoryPath);
-                $freeSpace = disk_free_space($directoryPath);
-
-                if ($totalSpace && $freeSpace) {
-                    $useSpace = $totalSpace - $freeSpace;
-                    $usageRate = round(($useSpace / $totalSpace) * 100, 2).'%';
-                    $base['Disk Space'] = 'total:'.size_format($totalSpace).'; used:'.size_format($useSpace).'; free:'.size_format($freeSpace).'; usage:'.$usageRate;
-                }
-            } catch (Exception $e) {
-                // 忽略磁盘空间获取错误
-            }
-        }
-
-        return $base;
-    }
-
-    /**
-     * IP地址掩码处理，隐藏中间部分
-     *
-     * @param  string  $ip
-     * @return string
-     */
-    private function maskIP(string $ip): string
-    {
-        // 检查是否是空或特殊的地址
-        if (empty($ip) || strlen($ip) < 5 || $ip === 'localhost' || $ip === '127.0.0.1') {
-            return $ip;
-        }
-
-        // 验证是否为有效的IPv4地址
-        if (! filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            // 尝试 IPv6 脱敏
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-                return $this->maskIPv6($ip);
-            }
-            return $ip;
-        }
-
-        // 将 IP 地址分割成数组
-        $parts = explode('.', $ip);
-
-        // 检查是否是标准的IPv4地址（4个部分）
-        if (count($parts) !== 4) {
-            return $ip;
-        }
-
-        // 验证每个部分是否为有效的数字
-        foreach ($parts as $part) {
-            if (! is_numeric($part) || (int) $part < 0 || (int) $part > 255) {
-                return $ip;
-            }
-        }
-
-        // 只保留第一个和最后一个部分，中间用 ***.*** 替换
-        return $parts[0].'.***.***.'.$parts[3];
-    }
-
-    /**
-     * IPv6 地址脱敏
-     *
-     * @param string $ip
-     * @return string
-     */
-    private function maskIPv6(string $ip): string
-    {
-        // 简化的 IPv6 脱敏：只显示前2组和后2组
-        $parts = explode(':', $ip);
-        if (count($parts) < 4) {
-            return '****:****:****:****';
-        }
-
-        $first = array_slice($parts, 0, 2);
-        $last = array_slice($parts, -2, 2);
-
-        return implode(':', $first) . ':****:****:' . implode(':', $last);
-    }
-
-    /**
-     * 获取路由信息
-     *
-     * @param  bool  $hasParseError  是否包含语法错误信息
-     * @return array|string[]
-     *
-     * @throws ReflectionException
-     */
-    private function getRouteInfo(bool $hasParseError): array
-    {
-        $route = $this->router->current();
-        if (! $route instanceof \Illuminate\Routing\Route) {
-            return [];
-        }
-
-        $uri = head($route->methods()).' '.$route->uri();
-        $action = $route->getAction();
-        $result = [
-            'uri' => $uri ?: '-',
-        ];
-        $result = array_merge($result, $action);
-        $controller = is_string($action['controller'] ?? null) ? $action['controller'] : '';
-        $uses = $action['uses'] ?? null;
-
-        if (! $hasParseError) {
-            // 语法错误无法执行这个代码段
-            if (str_contains($controller, '@')) {
-                [$controller, $method] = explode('@', $controller);
-                $reflector = $this->getReflectionMethod($controller, $method);
-                if ($reflector) {
-                    $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
-                    $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
-                }
-                unset($result['uses']);
-            } elseif ($uses instanceof Closure) {
-                $reflector = new ReflectionFunction($uses);
-                $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
-                $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
-                $result['uses'] = $uses;
-            } elseif (is_string($uses) && str_contains($uses, '@__invoke')) {
-                if (class_exists($controller) && method_exists($controller, 'render')) {
-                    $reflector = $this->getReflectionMethod($controller, 'render');
-                    if ($reflector) {
-                        $displayText = $this->getFilePath($reflector->getFileName()).'#'.$reflector->getStartLine().'-'.$reflector->getEndLine();
-                        $result['file'] = $this->generateEditorLink($reflector->getFileName(), $reflector->getStartLine(), $displayText);
-                        $result['controller'] = $controller.'@render';
-                    }
-                }
-            }
-        } else {
-            // 截取$controller 字符串里 @ 符号前面的字符串
-            $result['controller'] = substr($controller, 0, strrpos($controller, '@'));
-            unset($result['uses']);
-        }
-
-        $parametersObj = $route->parameters();
-        $parameters = [];
-        foreach ($parametersObj as $param) {
-            if (is_object($param)) {
-                if (method_exists($param, 'getRouteKey')) {
-                    $parameters[] = get_class($param).':['.$param->getRouteKeyName().':'.$param->getRouteKey().']';
-                } else {
-                    $parameters[] = collect($param)->toArray();
-                }
-            } else {
-                $parameters[] = $param;
-            }
-        }
-        if ($parameters) {
-            $result['params'] = $parameters;
-        }
-
-        $result['middleware'] = implode(', ', $route->middleware());
-        $result['action'] = $route->getActionMethod();
-
-        return $result;
-    }
-
-    /**
-     * 获取反射方法
-     *
-     * 注意：不使用缓存，每次直接创建反射对象，避免内存累积
-     *
-     * @param  string  $class 类名
-     * @param  string  $method 方法名
-     * @return \ReflectionMethod|null
-     */
-    private function getReflectionMethod(string $class, string $method): ?\ReflectionMethod
-    {
-        try {
-            return class_exists($class) && method_exists($class, $method)
-                ? new ReflectionMethod($class, $method)
-                : null;
-        } catch (\Throwable) {
-            return null;
-        }
-    }
-
-    private function getSqlInfo(): array
-    {
-        $sqlTimes = 0;
-        $sqlList = [];
-
-        // 直接读取SQL分组配置，不使用缓存
-        $groupConfig = config('trace.sql_groups', ['enabled' => true, 'groups' => []]);
-
-        // 定义默认SQL分组规则
-        $defaultGroupPatterns = [
-            'cache' => [
-                'name' => '缓存查询',
-                'class' => 'sql-group-cache',
-                'patterns' => [
-                    '/select\s+.*\s+from\s+`?cache`?/i',
-                    '/select\s+.*\s+from\s+`?cache_[\w]+`?/i',
-                    '/insert\s+into\s+`?cache`?/i',
-                    '/update\s+`?cache`?\s+set/i',
-                    '/delete\s+from\s+`?cache`?/i',
-                    '/select.*cache_key/i',
-                    '/select.*cache_value/i',
-                ]
             ],
-            'session' => [
-                'name' => '会话查询',
-                'class' => 'sql-group-session',
-                'patterns' => [
-                    '/select\s+.*\s+from\s+`?sessions`?/i',
-                    '/insert\s+into\s+`?sessions`?/i',
-                    '/update\s+`?sessions`?\s+set/i',
-                    '/delete\s+from\s+`?sessions`?/i',
-                    '/select.*session_id/i',
-                    '/select.*user_id/i',
-                    '/select.*payload/i',
-                ]
-            ]
         ];
-
-        // 合并配置和默认规则
-        $groupPatterns = array_merge($defaultGroupPatterns, $groupConfig['groups'] ?? []);
-        $groupEnabled = $groupConfig['enabled'] ?? true;
-        $collapsedByDefault = $groupConfig['collapsed_by_default'] ?? false;
-
-        // 分类SQL语句
-        $groupedSql = array_fill_keys(array_keys($groupPatterns), []);
-        $groupedSql['other'] = [];
-
-        foreach ($this->sqlList as $item) {
-            if (! isset($item['time'])) {
-                $sqlList[] = [
-                    'label' => $item['sql'],
-                    'right' => '-',
-                ];
-                continue;
-            }
-
-            $sqlTimes += $item['time'];
-            $sqlItem = [
-                'label' => $item['sql'],
-                'right' => !empty($item['time']) ? $item['time'].'ms' : '-',
-            ];
-
-            // 如果启用分组，判断SQL是否属于某个分组
-            if ($groupEnabled) {
-                $matchedGroup = null;
-                foreach ($groupPatterns as $groupKey => $group) {
-                    foreach ($group['patterns'] as $pattern) {
-                        if (preg_match($pattern, $item['sql'])) {
-                            $matchedGroup = $groupKey;
-                            break 2;
-                        }
-                    }
-                }
-
-                if ($matchedGroup && isset($groupedSql[$matchedGroup])) {
-                    $groupedSql[$matchedGroup][] = $sqlItem;
-                } else {
-                    $groupedSql['other'][] = $sqlItem;
-                }
-            } else {
-                // 未启用分组，直接添加
-                $sqlList[] = $sqlItem;
-            }
-        }
-
-        // 构建最终的SQL列表，如果有分组则展示分组，否则直接展示
-        if ($groupEnabled) {
-            // 检查是否有分组数据
-            $hasGroups = false;
-            foreach (array_keys($groupPatterns) as $groupKey) {
-                if (!empty($groupedSql[$groupKey])) {
-                    $hasGroups = true;
-                    break;
-                }
-            }
-
-            if ($hasGroups) {
-                // 添加其他SQL（业务SQL）
-                if (!empty($groupedSql['other'])) {
-                    $sqlList = $groupedSql['other'];
-                }
-
-                // 添加各个分组
-                foreach ($groupPatterns as $groupKey => $group) {
-                    if (!empty($groupedSql[$groupKey])) {
-                        $sqlList[] = [
-                            'type' => 'sql_group',
-                            'group' => $groupKey,
-                            'name' => $group['name'] ?? $groupKey,
-                            'class' => $group['class'] ?? 'sql-group',
-                            'collapsed' => $collapsedByDefault,
-                            'sqls' => $groupedSql[$groupKey],
-                            'count' => count($groupedSql[$groupKey])
-                        ];
-                    }
-                }
-            } else {
-                // 没有分组，直接展示
-                $sqlList = $groupedSql['other'];
-            }
-        }
-
-        // 毫秒转秒
-        $sqlTimes = $sqlTimes > 0 ? round($sqlTimes / 1000, 3) : 0;
-
-        return [$sqlList, $sqlTimes];
-    }
-
-    /**
-     * 获取会话信息
-     *
-     * @return array
-     */
-    private function getSessionInfo(): array
-    {
-        try {
-            $session = app('session');
-            if (empty($session)) {
-                return $_SESSION ?? [];
-            }
-
-            return $session->all();
-        } catch (Exception $e) {
-            // 未装载 session
-            return [];
-        }
-    }
-
-    private function getRequestInfo(): array
-    {
-        return [
-            'path' => $this->request->path(),
-            'status_code' => $this->response->getStatusCode(),
-            'format' => $this->request->getRequestFormat(),
-            'content_type' => $this->response->headers->get('Content-Type') ? $this->response->headers->get('Content-Type') : 'text/html',
-            'host' => $this->request->host(),
-            'ip' => $this->request->ip(),
-            // 'body'             => $this->request->all(),
-            'request_query' => $this->request->query->all(),
-            'request_request' => $this->request->request->all(),
-            'request_headers' => $this->request->headers->all(),
-            // 'request_cookies' => $this->request->cookies->all(),
-            'response_headers' => $this->response->headers->all(),
-        ];
-    }
-
-    public function getViewInfo(): array
-    {
-        $viewFiles = [];
-        // 获取当前路由的其他视图文件
-        foreach (app('view')->getFinder()->getViews() as $alias => $view) {
-            $viewFiles[] = $alias.' ('.trim(str_replace(base_path() ?: '', '', $view), '/').')';
-        }
-
-        return $viewFiles;
     }
 
     /**
@@ -1178,7 +367,6 @@ class Handle
         $stacktrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
         $stackItem = $stacktrace[0] ?? [];
 
-        // 查找第一个不在 vendor 目录中的调用栈
         foreach ($stacktrace as $trace) {
             if (! isset($trace['file']) || str_contains($trace['file'], '/vendor/')) {
                 continue;
@@ -1195,7 +383,7 @@ class Handle
         $baseFilePath = $this->getFilePath($stackItem['file']);
         $this->messages[] = [
             'var' => $var1,
-            'local' => basename($baseFilePath).'#'.$stackItem['line'],
+            'local' => basename($baseFilePath) . '#' . $stackItem['line'],
             'type' => 'trace',
             'right' => strtoupper($type),
             'file_path' => $stackItem['file'],
@@ -1204,6 +392,9 @@ class Handle
         ];
     }
 
+    /**
+     * 获取相对项目根目录的文件路径
+     */
     public function getFilePath($file = ''): string
     {
         if (empty($file)) {
@@ -1212,7 +403,6 @@ class Handle
 
         $basePath = base_path() ?: '';
 
-        // 如果文件路径不包含基础路径，直接返回原路径
         if (!str_contains($file, $basePath)) {
             return $file;
         }

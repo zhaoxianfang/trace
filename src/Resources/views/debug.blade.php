@@ -128,8 +128,8 @@ html,body{height:100%}
           <div class="iv">
             @if($t==='code_html')<div class="cb"><pre>{!!$v!!}</pre></div>
             @elseif($t==='code')<div class="cb"><pre><code>{{$v}}</code></pre></div>
-            @elseif($t==='debug_file')@php $e=$it['editor']??config('trace.editor','phpstorm');$f=$it['file']??'';$l=$it['line']??1 @endphp
-            <a href="{{$e}}://open?file={{urlencode($f)}}&line={{$l}}" class="fl"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>{{$v}}</a>
+            @elseif($t==='debug_file')@php $ed=$it['editor']??$editor??config('trace.editor','phpstorm');$fp=$it['file']??'';$ln=$it['line']??1 @endphp
+            <a href="{{$ed}}://open?file={{urlencode($fp)}}&line={{$ln}}" class="fl"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>{{$v}}</a>
             @else<span>{{is_string($v)?$v:json_encode($v,JSON_UNESCAPED_UNICODE)}}</span>@endif
           </div>
         </div>

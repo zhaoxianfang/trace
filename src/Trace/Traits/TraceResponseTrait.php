@@ -37,9 +37,10 @@ trait TraceResponseTrait
         }
 
         $editor = self::$editorConfig;
-        $fileName = $displayText ?? str_replace(base_path() ?: '', '', $file);
+        $fileName = $this->escapeHtml($displayText ?? str_replace(base_path() ?: '', '', $file));
+        $safeEditor = $this->escapeHtml($editor);
 
-        return '<span class="json-label"><a href="'.$this->escapeHtml($editor).'://open?file='.urlencode($file).'&amp;line='.$line.'" class="phpdebugbar-link">'.($fileName.'#'.$line).'</a></span>';
+        return '<a href="'.$safeEditor.'://open?file='.urlencode($file).'&amp;line='.$line.'" class="phpdebugbar-link">'.$fileName.'#'.$line.'</a>';
     }
 
     /**
@@ -93,21 +94,119 @@ trait TraceResponseTrait
     /**
      * 使用 Blade 视图渲染调试面板
      *
-     * @param array $trace 跟踪数据
+     * 将 $trace 原始数据转换为 blade 面板所需的结构化数据：
+     * - tabs: [tab_key => tab_label] 标签列表
+     * - contents: [tab_key => pre-rendered HTML] 预渲染的标签内容
+     * - badges: [tab_key => count] 标签上的数字角标
+     * - performance: ['time' => ..., 'memory' => ...] 性能数据
+     *
+     * @param array $trace 跟踪数据（keyed by tab name）
      * @return string HTML内容
      */
     protected function renderBladePanel(array $trace): string
     {
+        // 获取缓存的编辑器配置
+        if (self::$editorConfig === null) {
+            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
+        }
+        $editor = self::$editorConfig;
+
+        $tabs = [];
+        $contents = [];
+        $badges = [];
+        $performance = $this->extractPerformanceFromTrace($trace);
+
+        $tabIndex = 0;
+        foreach ($trace as $tabLabel => $items) {
+            $tabKey = 'tab' . ($tabIndex + 1);
+            $tabs[$tabKey] = $tabLabel;
+
+            // 检查是否为纯空状态提示（只有一个 is_empty_tips 条目）
+            $isEmptyTips = is_array($items) && count($items) === 1
+                && isset($items[array_key_first($items)]['is_empty_tips'])
+                && $items[array_key_first($items)]['is_empty_tips'];
+
+            if ($isEmptyTips) {
+                // 空状态：直接渲染居中提示，不包裹 <ul>
+                $tipsItem = $items[array_key_first($items)];
+                $contents[$tabKey] = $this->renderDynamicPanelItem(0, $tipsItem, $editor);
+            } else {
+                // 渲染该标签下的所有数据项为 HTML
+                $contentHtml = '<ul class="trace-list">';
+                $itemCount = 0;
+                foreach ($items as $key => $item) {
+                    // 跳过可能的 is_empty_tips 残余
+                    if (is_array($item) && isset($item['is_empty_tips']) && $item['is_empty_tips']) {
+                        continue;
+                    }
+                    $itemHtml = $this->renderDynamicPanelItem($key, $item, $editor);
+                    $contentHtml .= '<li class="trace-list-item">' . $itemHtml . '</li>';
+                    $itemCount++;
+                }
+                $contentHtml .= '</ul>';
+                $contents[$tabKey] = $contentHtml;
+
+                // 统计数量作为角标
+                if ($itemCount > 0) {
+                    $badges[$tabKey] = $itemCount;
+                }
+            }
+
+            $tabIndex++;
+        }
+
         // 使用新的 panel 视图（仅限内部使用）
         $view = view('trace::panel', [
             'trace' => $trace,
-            'tabs' => $trace['tabs'] ?? [],
-            'badges' => $trace['badges'] ?? [],
-            'contents' => $trace['contents'] ?? [],
-            'performance' => $trace['performance'] ?? [],
+            'tabs' => $tabs,
+            'badges' => $badges,
+            'contents' => $contents,
+            'performance' => $performance,
         ]);
 
         return $view->render();
+    }
+
+    /**
+     * 从 Trace 数据中提取性能指标
+     *
+     * 扫描 Base 标签页中的数据，提取运行时间和内存消耗，
+     * 用于面板工具栏的实时显示
+     *
+     * @param array $trace
+     * @return array ['time' => string, 'memory' => string]
+     */
+    protected function extractPerformanceFromTrace(array $trace): array
+    {
+        $performance = ['time' => '0ms', 'memory' => '0MB'];
+
+        foreach ($trace as $tabLabel => $items) {
+            // 查找 Base 标签页（匹配 "Base" 或 "Base (X)" 格式）
+            if (!is_array($items) || !str_contains($tabLabel, 'Base')) {
+                continue;
+            }
+
+            foreach ($items as $key => $value) {
+                $label = is_string($key) ? $key : (is_array($value) ? ($value['label'] ?? '') : '');
+
+                if ($label === '运行时间') {
+                    $rawTime = is_array($value) ? ($value['label'] ?? '') : (string)$value;
+                    if (is_string($rawTime) && !is_array($rawTime)) {
+                        $performance['time'] = $rawTime;
+                    }
+                }
+
+                if ($label === '内存消耗') {
+                    $rawMem = is_array($value) ? ($value['label'] ?? '') : (string)$value;
+                    if (is_string($rawMem) && !is_array($rawMem)) {
+                        $performance['memory'] = $rawMem;
+                    }
+                }
+            }
+            break; // 找到 Base 后退出
+        }
+
+        return $performance;
     }
 
     /**
@@ -144,12 +243,26 @@ trait TraceResponseTrait
             $active = $tabIndex < 2 ? 'active' : '';
             $contentItems = '';
 
-            foreach ($tabs as $k => $item) {
-                $itemHtml = $this->renderDynamicPanelItem($k, $item, $editor);
-                $contentItems .= "<li>{$itemHtml}</li>";
+            // 检查是否为纯空状态提示
+            $isEmptyTips = is_array($tabs) && count($tabs) === 1
+                && isset($tabs[array_key_first($tabs)]['is_empty_tips'])
+                && $tabs[array_key_first($tabs)]['is_empty_tips'];
+
+            if ($isEmptyTips) {
+                $tipsItem = $tabs[array_key_first($tabs)];
+                $contentItems = $this->renderDynamicPanelItem(0, $tipsItem, $editor);
+            } else {
+                foreach ($tabs as $k => $item) {
+                    if (is_array($item) && isset($item['is_empty_tips']) && $item['is_empty_tips']) {
+                        continue;
+                    }
+                    $itemHtml = $this->renderDynamicPanelItem($k, $item, $editor);
+                    $contentItems .= "<li>{$itemHtml}</li>";
+                }
+                $contentItems = "<ul>{$contentItems}</ul>";
             }
 
-            $tabContents .= "<div id=\"tab{$tabKey}\" class=\"tabs-content {$active}\" role=\"tabpanel\" aria-labelledby=\"tab{$tabKey}\"><ul>{$contentItems}</ul></div>";
+            $tabContents .= "<div id=\"tab{$tabKey}\" class=\"tabs-content {$active}\" role=\"tabpanel\" aria-labelledby=\"tab{$tabKey}\">{$contentItems}</div>";
         }
 
         // Logo base64 图片
@@ -188,21 +301,71 @@ HTML;
             return $this->renderDynamicSqlGroup($item);
         }
 
+        // 模型数据项处理（结构化展示模型操作详情）
+        if (is_array($item) && isset($item['type']) && $item['type'] == 'model_item') {
+            return $this->renderDynamicModelItem($item, $editor);
+        }
+
+        // 视图数据项处理（可展开查看视图传递的所有参数）
+        if (is_array($item) && isset($item['type']) && $item['type'] == 'view_item') {
+            return $this->renderDynamicViewItem($item, $editor);
+        }
+
+        // 文件链接类型（显示 key 标签 + IDE 链接）
+        if (is_array($item) && isset($item['type']) && $item['type'] == 'file_link') {
+            // 优先使用 item 中的 label，其次使用 key（做友好化处理）
+            $label = '';
+            if (isset($item['label_override'])) {
+                $label = $this->escapeHtml($item['label_override']);
+            } elseif (is_string($key)) {
+                // key 友好化映射
+                $labelMap = [
+                    'file' => 'Controller File',
+                    'route_file' => 'Route File',
+                    'route_definition' => 'Route Definition',
+                ];
+                $label = $this->escapeHtml($labelMap[$key] ?? $key);
+            }
+            $displayText = $item['display'] ?? '';
+            $filePath = $item['file_path'] ?? '';
+            $line = (int)($item['line'] ?? 1);
+            $labelClass = isset($item['label_class']) ? ' ' . $item['label_class'] : '';
+            $html = '';
+            if ($label) {
+                $html .= "<span class='json-label{$labelClass}'>{$label}</span>";
+            }
+            $html .= "<span class='json-string-content' style='font-size:13px;'>";
+            $html .= $this->generateEditorLink($filePath, $line, $displayText);
+            $html .= "</span>";
+            return $html;
+        }
+
         // 空状态提示（如 Messages 标签无内容时）
+        // 注意：返回值不包含 <li>，由外层统一包裹
         if (is_array($item) && isset($item['is_empty_tips']) && $item['is_empty_tips']) {
             $message = $this->escapeHtml($item['message'] ?? '');
             $tips = $this->escapeHtml($item['tips'] ?? '');
-            return "<li style='text-align: center; padding: 30px 20px;'><div style='color: #a0aec0; font-size: 14px; margin-bottom: 8px;'>{$message}</div><div style='color: #718096; font-size: 12px;'>{$tips}</div></li>";
+            $tipsHtml = $tips ? "<div style='color: #718096; font-size: 12px; margin-top: 6px;'>{$tips}</div>" : '';
+            return "<div style='text-align: center; padding: 40px 20px;'><div style='color: #a0aec0; font-size: 14px; margin-bottom: 4px;'>{$message}</div>{$tipsHtml}</div>";
         }
 
-        // 带有原始 HTML 的内容（如异常文件链接）
+        // 带有原始 HTML 的内容（如异常文件链接或代码块）
+        // 注意：返回值不包含 <li>，由外层统一包裹
         if (is_array($item) && isset($item['raw_html']) && $item['raw_html']) {
+            // 显示 key 标签
+            $html = '';
+            if (is_string($key) && $key !== '0') {
+                $safeKey = $this->escapeHtml($key);
+                $html .= "<span class='json-label'>{$safeKey}</span>";
+            }
             $content = $item['content'];
             // 如果包含错误行代码高亮，添加样式
             if (is_string($content) && str_contains($content, 'error-line-code')) {
-                return "<li><pre style='background:#1e1e2e;color:#cdd6f4;padding:15px;border-radius:6px;overflow-x:auto;font-family:Consolas,Monaco,Courier New,monospace;font-size:13px;line-height:1.6;margin:5px 0;'>{$content}</pre></li>";
+                $html .= "<pre style='background:#1e1e2e;color:#cdd6f4;padding:15px;border-radius:6px;overflow-x:auto;font-family:Consolas,Monaco,Courier New,monospace;font-size:13px;line-height:1.6;margin:5px 0;'>{$content}</pre>";
+                return $html;
             }
-            return "<li>{$content}</li>";
+            $html .= $content;
+            return $html;
         }
 
         // Trace 数据类型
@@ -252,6 +415,129 @@ HTML;
     }
 
     /**
+     * 渲染动态视图数据项
+     *
+     * 每个视图项显示视图名称、可点击的 IDE 文件链接和参数数量，
+     * 点击展开后可查看传递到该视图的所有参数/变量明细
+     *
+     * @param array $item 视图数据项
+     * @param string $editor 编辑器协议
+     * @return string HTML
+     */
+    protected function renderDynamicViewItem(array $item, string $editor): string
+    {
+        $label = $this->escapeHtml($item['label'] ?? '');
+        $viewPath = $item['view_path'] ?? '';
+        $viewPathRel = $this->escapeHtml($item['view_path_rel'] ?? '');
+        $viewParams = $item['view_params'] ?? [];
+        $paramCount = (int) ($item['param_count'] ?? 0);
+
+        // 视图名称标签
+        $html = "<span class='json-label'>{$label}</span>";
+
+        // 内容区域：文件路径 IDE 链接 + 参数展开箭头（同一行）
+        $contentHtml = '';
+
+        if (!empty($viewPath)) {
+            $contentHtml .= $this->generateEditorLink($viewPath, 1, $viewPathRel ?: basename($viewPath));
+        }
+
+        // 参数展开箭头内嵌在内容区域内，与文件路径保持同一行
+        if ($paramCount > 0 && !empty($viewParams)) {
+            $jsonString = $this->escapeHtml(json_encode($viewParams, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+            $contentHtml .= '<span class="json-arrow-pre-wrapper json-arrow-pre-wrapper-inline">';
+            $contentHtml .= '<span class="json-arrow" onclick="toggleJson(this)" role="button" tabindex="0" aria-expanded="false" title="展开查看视图参数">▶</span>';
+            $contentHtml .= '<pre class="json">' . $jsonString . '</pre>';
+            $contentHtml .= '</span>';
+        } elseif ($paramCount > 0) {
+            $contentHtml .= '<span class="json-arrow-pre-wrapper json-arrow-pre-wrapper-inline">';
+            $contentHtml .= '<span class="json-arrow" onclick="toggleJson(this)" role="button" tabindex="0" aria-expanded="false" title="展开查看视图参数">▶</span>';
+            $contentHtml .= '<pre class="json">[]</pre>';
+            $contentHtml .= '</span>';
+        }
+
+        $html .= "<span class='json-string-content' style='font-size:12px;display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;'>" . $contentHtml . "</span>";
+
+        // 参数数量标签
+        if ($paramCount > 0) {
+            $html .= "<span class='json-right'>" . $paramCount . " vars</span>";
+        }
+
+        return $html;
+    }
+
+    /**
+     * 渲染动态模型数据项
+     *
+     * 显示模型类名（可点击 IDE 链接）、模型 ID、操作次数和操作类型标记
+     *
+     * @param array $item 模型数据项
+     * @param string $editor 编辑器协议
+     * @return string HTML
+     */
+    protected function renderDynamicModelItem(array $item, string $editor): string
+    {
+        $modelClass = $this->escapeHtml($item['model_class'] ?? '');
+        $modelId = $this->escapeHtml($item['model_id'] ?? '');
+        $eventCount = (int)($item['event_count'] ?? 0);
+        $hasQueries = !empty($item['has_db_queries']);
+        $hasWrites = !empty($item['has_db_writes']);
+        $referenceOnly = !empty($item['reference_only']);
+        $filePath = $item['file_path'] ?? '';
+        $events = $item['events'] ?? [];
+
+        // 左侧：模型类名标签
+        $html = "<span class='json-label'>" . $modelClass . "</span>";
+
+        // 中间：文件路径 IDE 链接 + 模型 ID
+        $centerHtml = '';
+        if (!empty($filePath)) {
+            $relativePath = trim(str_replace(base_path() ?: '', '', $filePath), '/');
+            $centerHtml .= $this->generateEditorLink($filePath, 1, $relativePath);
+        }
+        $centerHtml .= ' <span style="color:#8b949e;font-size:11px;">#' . $modelId . '</span>';
+        $html .= "<span class='json-string-content' style='font-size:12px;'>" . $centerHtml . "</span>";
+
+        // 右侧：操作标记
+        $badges = [];
+        if ($hasQueries && $hasWrites) {
+            $badges[] = '<span class="model-badge model-badge-mixed">查询+写入</span>';
+        } elseif ($hasQueries) {
+            $badges[] = '<span class="model-badge model-badge-query">查询</span>';
+        } elseif ($hasWrites) {
+            $badges[] = '<span class="model-badge model-badge-write">写入</span>';
+        } elseif ($referenceOnly) {
+            $badges[] = '<span class="model-badge model-badge-ref">关联</span>';
+        }
+
+        // 事件列表简写
+        $eventLabels = array_map(function($e) {
+            return match($e) {
+                'retrieved' => 'R',
+                'creating' => 'C+',
+                'created' => 'C',
+                'updating' => 'U+',
+                'updated' => 'U',
+                'deleting' => 'D+',
+                'deleted' => 'D',
+                'saving' => 'S+',
+                'saved' => 'S',
+                default => substr($e, 0, 1),
+            };
+        }, array_unique($events));
+        $eventStr = implode('', $eventLabels);
+
+        $rightHtml = implode(' ', $badges);
+        $rightHtml .= ' <span style="color:#8b949e;font-size:11px;">「' . $eventCount . '次」</span>';
+        if ($eventStr) {
+            $rightHtml .= ' <span style="color:#58a6ff;font-size:10px;">[' . $eventStr . ']</span>';
+        }
+        $html .= "<span class='json-right'>" . $rightHtml . "</span>";
+
+        return $html;
+    }
+
+    /**
      * 渲染动态 SQL 分组
      *
      * @param array $group 分组数据
@@ -295,34 +581,39 @@ SQL;
      */
     protected function renderDynamicTraceItem(array $data, string $editor): string
     {
-        $filePath = $this->escapeHtml($data['file_path'] ?? '');
+        $filePath = $data['file_path'] ?? '';
         $line = (int) ($data['line'] ?? 1);
         $local = $this->escapeHtml($data['local'] ?? '');
         $var = $data['var'] ?? null;
 
         $safeEditor = $this->escapeHtml($editor);
-        $html = '<span class="json-label">';
-        $html .= '<a href="' . $safeEditor . '://open?file=' . urlencode($filePath) . '&amp;line=' . $line . '" class="phpdebugbar-link">' . $local . '</a>';
+        $html = '<span class="json-label">' . $local . '</span>';
+        $html .= '<span class="json-string-content" style="font-size:13px;">';
+        $html .= '<a href="' . $safeEditor . '://open?file=' . urlencode($filePath) . '&amp;line=' . $line . '" class="phpdebugbar-link">' . $this->escapeHtml($data['base_path'] ?? $filePath) . '#' . $line . '</a>';
         $html .= '</span>';
 
         if (is_array($var) && !empty($var)) {
             $jsonString = $this->escapeHtml(json_encode($var, JSON_UNESCAPED_UNICODE));
-            $html .= <<<JSON
-<div class="json-arrow-pre-wrapper">
-    <span class="json-arrow" onclick="toggleJson(this)">▶</span>
-    <pre class="json">{$jsonString}</pre>
-</div>
-JSON;
+            $html .= '<span class="json-arrow-pre-wrapper json-arrow-pre-wrapper-inline">';
+            $html .= '<span class="json-arrow" onclick="toggleJson(this)">▶</span>';
+            $html .= '<pre class="json">' . $jsonString . '</pre>';
+            $html .= '</span>';
         } elseif (is_array($var)) {
-            $html .= "<div class='json-string-content'>[]</div>";
+            $html .= "<span class='json-string-content'>[]</span>";
         } else {
             if (is_scalar($var) || is_null($var)) {
                 $value = $this->escapeHtml(format_param($var));
-                $html .= "<div class='json-string-content'>{$value}</div>";
+                $html .= "<span class='json-string-content'>{$value}</span>";
             } else {
                 $value = $this->escapeHtml((string) $var);
-                $html .= "<div class='json-string-content'>{$value}</div>";
+                $html .= "<span class='json-string-content'>{$value}</span>";
             }
+        }
+
+        // 右侧类型标记
+        $rightType = $data['right'] ?? '';
+        if ($rightType) {
+            $html .= "<span class='json-right'>" . $this->escapeHtml($rightType) . "</span>";
         }
 
         return $html;

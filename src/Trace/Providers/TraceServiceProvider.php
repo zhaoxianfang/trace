@@ -107,6 +107,10 @@ class TraceServiceProvider extends ServiceProvider
      * 注册服务（在启动前调用）
      *
      * 执行时机：服务容器注册阶段
+     *
+     * 注意：当 trace.enabled 为 false 时，Handle 仍会注册（供异常处理器使用），
+     * 但 Handle 内部会跳过所有调试数据收集（SQL/Model/View/Route），
+     * output() 返回空字符串，从而大幅降低资源消耗。
      */
     public function register(): void
     {
@@ -116,7 +120,7 @@ class TraceServiceProvider extends ServiceProvider
         // 注册路由服务提供者
         $this->app->register(RouteServiceProvider::class);
 
-        // 注册 Trace 处理器为单例
+        // 注册 Trace 处理器为单例（异常处理器依赖此实例）
         $this->registerTraceHandle();
 
         // 注册异常处理器（带防止重复初始化检查）
