@@ -23,6 +23,19 @@ trait TraceResponseTrait
     protected static ?string $editorConfig = null;
 
     /**
+     * 获取编辑器配置（带缓存）
+     *
+     * @return string 编辑器协议名称
+     */
+    protected function getEditorConfig(): string
+    {
+        if (self::$editorConfig === null) {
+            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
+        }
+        return self::$editorConfig;
+    }
+
+    /**
      * 生成编辑器链接
      *
      * @param string $file 文件路径
@@ -32,11 +45,7 @@ trait TraceResponseTrait
      */
     protected function generateEditorLink(string $file, int $line, ?string $displayText = null): string
     {
-        if (self::$editorConfig === null) {
-            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
-        }
-
-        $editor = self::$editorConfig;
+        $editor = $this->getEditorConfig();
         $fileName = $this->escapeHtml($displayText ?? str_replace(base_path() ?: '', '', $file));
         $safeEditor = $this->escapeHtml($editor);
 
@@ -58,7 +67,7 @@ trait TraceResponseTrait
             try {
                 return $this->renderBladePanel($trace);
             } catch (\Throwable $e) {
-                // Blade 渲染失败，回退到动态渲染
+                $this->logTraceError('Blade panel render failed', $e);
             }
         }
 
@@ -87,6 +96,7 @@ trait TraceResponseTrait
             $view = $app->make('view');
             return $view->exists('trace::trace-panel');
         } catch (\Throwable $e) {
+            $this->logTraceError('Blade views check failed', $e);
             return false;
         }
     }
@@ -105,11 +115,7 @@ trait TraceResponseTrait
      */
     protected function renderBladePanel(array $trace): string
     {
-        // 获取缓存的编辑器配置
-        if (self::$editorConfig === null) {
-            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
-        }
-        $editor = self::$editorConfig;
+        $editor = $this->getEditorConfig();
 
         $tabs = [];
         $contents = [];
@@ -217,12 +223,7 @@ trait TraceResponseTrait
      */
     protected function renderDynamicPanel(array $trace): string
     {
-        // 获取缓存的编辑器配置
-        if (self::$editorConfig === null) {
-            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
-        }
-
-        $editor = self::$editorConfig;
+        $editor = $this->getEditorConfig();
 
         // 构建 Tab 头部
         $tabHeaders = '';
@@ -303,12 +304,12 @@ HTML;
 
         // 模型数据项处理（结构化展示模型操作详情）
         if (is_array($item) && isset($item['type']) && $item['type'] == 'model_item') {
-            return $this->renderDynamicModelItem($item, $editor);
+            return $this->renderDynamicModelItem($item);
         }
 
         // 视图数据项处理（可展开查看视图传递的所有参数）
         if (is_array($item) && isset($item['type']) && $item['type'] == 'view_item') {
-            return $this->renderDynamicViewItem($item, $editor);
+            return $this->renderDynamicViewItem($item);
         }
 
         // 文件链接类型（显示 key 标签 + IDE 链接）
@@ -424,7 +425,7 @@ HTML;
      * @param string $editor 编辑器协议
      * @return string HTML
      */
-    protected function renderDynamicViewItem(array $item, string $editor): string
+    protected function renderDynamicViewItem(array $item): string
     {
         $label = $this->escapeHtml($item['label'] ?? '');
         $viewPath = $item['view_path'] ?? '';
@@ -475,7 +476,7 @@ HTML;
      * @param string $editor 编辑器协议
      * @return string HTML
      */
-    protected function renderDynamicModelItem(array $item, string $editor): string
+    protected function renderDynamicModelItem(array $item): string
     {
         $modelClass = $this->escapeHtml($item['model_class'] ?? '');
         $modelId = $this->escapeHtml($item['model_id'] ?? '');
@@ -638,7 +639,7 @@ SQL;
                     'sqls' => $group['sqls'] ?? [],
                 ])->render();
             } catch (\Throwable $e) {
-                // Blade 渲染失败，回退到动态渲染
+                $this->logTraceError('Blade SQL group render failed', $e);
             }
         }
 
@@ -664,12 +665,7 @@ SQL;
      */
     protected function handleTraceData($data = []): string
     {
-        // 获取缓存的编辑器配置
-        if (self::$editorConfig === null) {
-            self::$editorConfig = config('trace.editor') ?? 'phpstorm';
-        }
-
-        $editor = self::$editorConfig;
+        $editor = $this->getEditorConfig();
 
         // 优先尝试使用 Blade 组件
         if ($this->canUseBladeViews()) {
@@ -678,7 +674,7 @@ SQL;
                     'data' => array_merge($data, ['editor' => $editor]),
                 ])->render();
             } catch (\Throwable $e) {
-                // Blade 渲染失败，回退到动态渲染
+                $this->logTraceError('Blade trace item render failed', $e);
             }
         }
 
@@ -725,7 +721,8 @@ SQL;
                     $response->headers->remove('Content-Length');
                 }
             } catch (Exception) {
-                // JSON 解析失败，不处理
+                // JSON 解析失败（非 JSON 响应），不处理
+                $this->logTraceError('JSON decode failed for non-GET response');
             }
             return $response;
         }
@@ -1072,5 +1069,31 @@ JS;
         }
 
         return '';
+    }
+
+    /**
+     * 记录 Trace 内部错误到日志
+     *
+     * 仅在调试模式下记录，避免在生产环境产生噪点。
+     * 这些错误通常意味着 Blade 视图不可用等降级路径，
+     * 不影响实际功能，但有助于开发排查。
+     *
+     * @param string $message 错误描述
+     * @param \Throwable|null $e 异常对象
+     */
+    protected function logTraceError(string $message, ?\Throwable $e = null): void
+    {
+        if (!config('app.debug', false)) {
+            return;
+        }
+        try {
+            $logMsg = '[Trace] ' . $message;
+            if ($e !== null) {
+                $logMsg .= ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine();
+            }
+            error_log($logMsg);
+        } catch (\Throwable) {
+            // 日志记录本身失败，无法再降级
+        }
     }
 }

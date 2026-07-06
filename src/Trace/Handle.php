@@ -250,12 +250,12 @@ class Handle
             $exceptionObj = $this->currentException;
         } elseif (property_exists($response, 'exception') && ! empty($response->exception)) {
             $exceptionObj = $response->exception;
-        } elseif (self::$initErr && ! empty(self::$message)) {
-            $fileName = self::$content['file:'] ?? '';
-            $line = self::$content['line:'] ?? 0;
-            $code = self::$content['code:'] ?? 500;
+        } elseif (property_exists($this, 'initErr') && self::$initErr && ! empty(self::$message ?? null)) {
+            $fileName = (self::$content['file:'] ?? '');
+            $line = (int)(self::$content['line:'] ?? 0);
+            $code = (int)(self::$content['code:'] ?? 500);
             $message = self::$message;
-            $exceptionContent = $this->getExceptionContent(self::$errObj);
+            $exceptionContent = $this->getExceptionContent(self::$errObj ?? new \Exception($message));
 
             $editor = config('trace.editor') ?? 'phpstorm';
             $exception = [
@@ -303,12 +303,27 @@ class Handle
         $models = $this->getModelList();
 
         // 页面Trace信息
+        // 使用白名单映射替代变量变量（$$name），防止潜在的安全风险
         $trace = [];
+        $dataMap = [
+            'messages' => $messages,
+            'sql' => $sql,
+            'base' => $base,
+            'route' => $route,
+            'view' => $view,
+            'models' => $models,
+            'exception' => $exception,
+            'session' => $session,
+            'request' => $request,
+        ];
         foreach ($this->config['tabs'] as $name => $title) {
             $name = strtolower($name);
+            $sourceData = $dataMap[$name] ?? [];
             $result = [];
-            foreach ($$name as $subTitle => $item) {
-                $result[$subTitle] = $item;
+            if (is_array($sourceData)) {
+                foreach ($sourceData as $subTitle => $item) {
+                    $result[$subTitle] = $item;
+                }
             }
             $showTips = in_array($name, ['messages', 'sql', 'models']) && ! empty($result) ? ' (' . count($result) . ')' : '';
             $showTips = in_array($name, ['exception']) && ! empty($result) ? ' 🔴' : $showTips;
@@ -319,6 +334,9 @@ class Handle
         try {
             $this->traceEndHandle($trace);
         } catch (Exception $e) {
+            if (config('app.debug', false)) {
+                error_log('[Trace] traceEndHandle failed: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            }
             return '';
         }
 

@@ -184,7 +184,7 @@ if (! function_exists('get_trace_module_name')) {
      * @param  bool  $toUnderlineConvert  是否转换为 驼峰+小写 模式
      * @return mixed|string
      */
-    function get_trace_module_name(?bool $toUnderlineConvert = false): mixed
+    function get_trace_module_name(?bool $toUnderlineConvert = false): string
     {
         if (function_exists('module_name')) {
             return module_name();
@@ -209,7 +209,7 @@ if (! function_exists('get_trace_module_name')) {
             }
 
             return $toUnderlineConvert ? 'app' : 'App';
-        } catch (Exception $err) {
+        } catch (\Exception $err) {
             return get_trace_url_module_name($toUnderlineConvert);
         }
     }

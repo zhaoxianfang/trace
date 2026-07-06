@@ -210,8 +210,7 @@ trait ExceptionCodeTrait
      */
     private function renderFallbackHtml(string $message, int $code): \Illuminate\Http\Response
     {
-        $title = $this->getErrorTitle($code);
-        $emoji = $this->getErrorEmoji($code);
+        $title = $this->getCodeMeg($code);
         $isDebug = config('app.debug', false);
         $requestId = $this->generateRequestId();
 
@@ -279,6 +278,8 @@ HTML;
 
     /**
      * 获取错误标题
+     *
+     * @deprecated 直接使用 getCodeMeg() 即可，此方法仅作为语义别名保留
      */
     private function getErrorTitle(int $code): string
     {
