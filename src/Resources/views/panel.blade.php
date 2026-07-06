@@ -5,15 +5,16 @@
     使用 CSS 隔离技术防止外部样式干扰
 --}}
 <style id="trace-panel-styles">
-/* ===== CSS 重置与隔离 ===== */
+/* ===== 基础重置（iframe 隔离环境，无需 all:initial） ===== */
 #trace-debug-panel,
 #trace-debug-panel *,
 #trace-debug-panel *::before,
 #trace-debug-panel *::after {
-    all: initial;
-    box-sizing: border-box !important;
+    box-sizing: border-box;
     margin: 0;
     padding: 0;
+}
+#trace-debug-panel {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -703,21 +704,36 @@
         }
     });
     
-    // 键盘快捷键
+    // 监听父页面命令（iframe 隔离模式下使用）
+    window.addEventListener('message', function(e) {
+        if (!e.data || typeof e.data._trc !== 'string') return;
+        switch(e.data._trc) {
+            case 'esc':
+                // 父页面发送的 ESC 命令：收起面板内容
+                if (panel) panel.style.display = 'none';
+                break;
+            case 'show':
+                // 父页面发送的显示命令：恢复面板
+                if (panel) panel.style.display = 'block';
+                break;
+        }
+    });
+    
+    // 键盘快捷键（iframe 内聚焦时仍可响应）
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
-            // 如果 debug panel 存在且可见，按 ESC 隐藏
-            if (panel.style.display !== 'none') {
+            if (panel && panel.style.display !== 'none') {
+                // 通知父页面隐藏整个 iframe，父页面会显示重开按钮
+                try { window.parent.postMessage({_trc:'esc'}, '*'); } catch(ex) {}
                 panel.style.display = 'none';
-                // 显示重新打开的小按钮
-                showReopenButton();
             }
         }
         
         // Ctrl+Shift+D 重新打开面板
-        if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
             e.preventDefault();
             panel.style.display = 'block';
+            try { window.parent.postMessage({_trh: Math.max(document.body.scrollHeight, 50)}, '*'); } catch(ex) {}
         }
     });
     
@@ -736,46 +752,6 @@
             }
         }
     });
-    
-    // 显示重新打开按钮（面板被 ESC 关闭后）
-    function showReopenButton() {
-        if (document.getElementById('trace-reopen-btn')) return;
-        var btn = document.createElement('div');
-        btn.id = 'trace-reopen-btn';
-        btn.innerHTML = '📊';
-        btn.title = '打开 Trace 调试面板 (Ctrl+Shift+D)';
-        Object.assign(btn.style, {
-            position: 'fixed',
-            bottom: '10px',
-            right: '10px',
-            zIndex: '999999',
-            width: '40px',
-            height: '40px',
-            borderRadius: '20px',
-            background: 'linear-gradient(135deg, #667eea, #764ba2)',
-            color: '#fff',
-            fontSize: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            boxShadow: '0 4px 15px rgba(102,126,234,.3)',
-            transition: 'transform .2s',
-            border: 'none',
-            userSelect: 'none'
-        });
-        btn.addEventListener('click', function() {
-            panel.style.display = 'block';
-            btn.remove();
-        });
-        btn.addEventListener('mouseenter', function() {
-            this.style.transform = 'scale(1.1)';
-        });
-        btn.addEventListener('mouseleave', function() {
-            this.style.transform = 'scale(1)';
-        });
-        document.body.appendChild(btn);
-    }
     
     // 更新性能数据
     @if(isset($performance))

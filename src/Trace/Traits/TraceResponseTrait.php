@@ -688,6 +688,9 @@ SQL;
     /**
      * 把trace数据渲染到响应的html中
      *
+     * 使用 iframe + srcdoc 实现完全的浏览器级 CSS/JS 隔离，
+     * 外部样式无法穿透 iframe 边界，从根本上杜绝样式污染。
+     *
      * @param  Request  $request  HTTP 请求对象
      * @param  SymfonyResponse  $response  HTTP 响应对象（支持多种响应类型）
      * @return SymfonyResponse 返回处理后的响应对象
@@ -711,7 +714,7 @@ SQL;
             return $response;
         }
 
-        // 处理非 GET 请求
+        // 处理非 GET 请求（JSON 响应等）
         if (! $request->isMethod('get')) {
             try {
                 $decodedContent = json_decode($content, true);
@@ -727,72 +730,29 @@ SQL;
             return $response;
         }
 
-        // 安全获取路由 URL
-        try {
-            $cssRoute = route('zxf.trace.trace.css');
-            $jsRoute = route('zxf.trace.trace.js');
-        } catch (\Exception) {
-            // 路由不存在，使用备用路径
-            $cssRoute = '/zxf/trace/assets/trace.css';
-            $jsRoute = '/zxf/trace/assets/trace.js';
-        }
+        // 使用 iframe + srcdoc 实现完全隔离
+        $iframeHtml = $this->buildIsolatedIframe($traceContent);
 
-        // 移除协议部分，使用协议相对 URL
-        $cssRoute = preg_replace('/\Ahttps?:/', '', $cssRoute);
-        $jsRoute = preg_replace('/\Ahttps?:/', '', $jsRoute);
-
-        $style = "<link rel='stylesheet' type='text/css' property='stylesheet' href='{$cssRoute}' data-turbolinks-eval='false' data-turbo-eval='false'>";
-        $script = "<script src='{$jsRoute}' type='text/javascript' data-turbolinks-eval='false' data-turbo-eval='false'></script>";
-
-        // 尝试找到 </head> 标签的位置（不区分大小写）
-        $posCss = strripos($content, '</head>');
-        $posHeadCase = strripos($content, '</HEAD>');
-
-        // 使用找到的位置（区分大小写优先）
-        $insertCssPos = max($posCss, $posHeadCase);
-
-        if ($insertCssPos !== false) {
-            $content = substr($content, 0, $insertCssPos).PHP_EOL.$style.PHP_EOL.substr($content, $insertCssPos);
-        } else {
-            // 如果没有找到 </head> 标签，尝试其他方案
-            // 1. 尝试在 <head> 标签后插入
-            $posHeadStart = stripos($content, '<head');
-            if ($posHeadStart !== false) {
-                $posHeadEnd = stripos($content, '>', $posHeadStart);
-                if ($posHeadEnd !== false) {
-                    $content = substr($content, 0, $posHeadEnd + 1).PHP_EOL.$style.PHP_EOL.substr($content, $posHeadEnd + 1);
-                } else {
-                    $content = $style.PHP_EOL.$content;
-                }
-            } else {
-                // 2. 如果没有找到任何 head 标签，在文档开头插入
-                $content = $style.PHP_EOL.$content;
-            }
-        }
-
-        // 尝试找到 </body> 标签的位置（不区分大小写）
-        $posJs = strripos($content, '</body>');
+        // 注入到 </body> 之前
+        $posBody = strripos($content, '</body>');
         $posBodyCase = strripos($content, '</BODY>');
+        $insertPos = max($posBody, $posBodyCase);
 
-        // 使用找到的位置（区分大小写优先）
-        $insertJsPos = max($posJs, $posBodyCase);
-
-        if ($insertJsPos !== false) {
-            $content = substr($content, 0, $insertJsPos).PHP_EOL.$traceContent.PHP_EOL.$script.substr($content, $insertJsPos);
+        if ($insertPos !== false) {
+            $content = substr($content, 0, $insertPos) . $iframeHtml . substr($content, $insertPos);
         } else {
-            // 如果没有找到 </body> 标签，尝试其他方案
-            // 1. 尝试在 <body> 标签前插入
+            // 回退：尝试在 <body> 标签后插入
             $posBodyStart = stripos($content, '<body');
             if ($posBodyStart !== false) {
                 $posBodyEnd = stripos($content, '>', $posBodyStart);
                 if ($posBodyEnd !== false) {
-                    $content = substr($content, 0, $posBodyEnd + 1).PHP_EOL.$traceContent.PHP_EOL.$script.PHP_EOL.substr($content, $posBodyEnd + 1);
+                    $content = substr($content, 0, $posBodyEnd + 1) . $iframeHtml . substr($content, $posBodyEnd + 1);
                 } else {
-                    $content = $content.PHP_EOL.$traceContent.PHP_EOL.$script;
+                    $content .= $iframeHtml;
                 }
             } else {
-                // 2. 如果没有找到任何 body 标签，在文档末尾插入
-                $content = $content.PHP_EOL.$traceContent.PHP_EOL.$script;
+                // 最终回退：追加到末尾
+                $content .= $iframeHtml;
             }
         }
 
@@ -804,5 +764,313 @@ SQL;
         }
 
         return $response;
+    }
+
+    /**
+     * 构建带 srcdoc 的隔离 iframe
+     *
+     * 将调试面板内容包装为完整的 HTML 文档，通过 iframe 的 srcdoc 属性注入，
+     * 利用浏览器原生的跨文档隔离机制，彻底阻断外部 CSS/JS 的干扰。
+     *
+     * @param  string  $panelContent  面板 HTML 内容
+     * @return string  完整的 iframe HTML 标签 + 父页面管理脚本
+     */
+    protected function buildIsolatedIframe(string $panelContent): string
+    {
+        $iframeId = 'tfrm' . substr(md5(uniqid('', true)), 0, 8);
+        $isBlade = $this->isBladePanel($panelContent);
+
+        if ($isBlade) {
+            // Blade 面板 (trace-debug-panel)：CSS/JS 已内联在输出中
+            $bodyContent = $panelContent;
+        } else {
+            // Heredoc 面板 (trace-tools-box)：需读取并内联 CSS/JS 资源文件
+            $css = $this->getAssetContent('trace.css');
+            $js = $this->getAssetContent('trace.js');
+            $bodyContent = "<style>{$css}</style>\n{$panelContent}\n<script>{$js}</script>";
+        }
+
+        $docHtml = $this->buildIframeDocument($bodyContent);
+        $srcdoc = htmlspecialchars($docHtml, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        $style = $this->getParentIframeStyle($iframeId);
+        $script = $this->getParentIframeScript($iframeId);
+
+        return $style . "\n"
+            . '<iframe id="' . $iframeId . '" srcdoc="' . $srcdoc . '" '
+            . 'style="position:fixed;bottom:0;left:0;width:100%;z-index:2147483646;border:none;background:transparent;transition:height .25s ease;height:320px;max-height:100vh;" '
+            . 'title="Trace Debug Panel" scrolling="no" frameborder="0" allowtransparency="true">'
+            . '</iframe>' . "\n"
+            . $script;
+    }
+
+    /**
+     * 判断面板内容是否为 Blade 渲染的 trace-debug-panel
+     *
+     * @param  string  $content
+     * @return bool
+     */
+    protected function isBladePanel(string $content): bool
+    {
+        return str_contains($content, 'trace-debug-panel');
+    }
+
+    /**
+     * 构建 iframe 内完整的 HTML5 文档
+     *
+     * @param  string  $bodyContent  body 内容（含内联 CSS/JS）
+     * @return string  完整 HTML 文档
+     */
+    protected function buildIframeDocument(string $bodyContent): string
+    {
+        $heightReporter = $this->getIframeHeightReporter();
+
+        return '<!DOCTYPE html>' . "\n"
+            . '<html lang="zh-CN">' . "\n"
+            . '<head>' . "\n"
+            . '<meta charset="UTF-8">' . "\n"
+            . '<meta name="viewport" content="width=device-width, initial-scale=1.0">' . "\n"
+            . '<style>html,body{margin:0;padding:0;overflow:hidden;background:transparent;}</style>' . "\n"
+            . '</head>' . "\n"
+            . '<body>' . "\n"
+            . $bodyContent . "\n"
+            . $heightReporter . "\n"
+            . '</body>' . "\n"
+            . '</html>';
+    }
+
+    /**
+     * 获取 iframe 高度上报脚本
+     *
+     * 通过 MutationObserver 监控面板 DOM 变化，自动向父页面报告当前高度，
+     * 确保 iframe 始终匹配面板内容的实际尺寸，避免遮挡页面或出现多余空白。
+     *
+     * @return string JS 脚本
+     */
+    protected function getIframeHeightReporter(): string
+    {
+        return <<<'JS'
+<script>
+(function() {
+    'use strict';
+    function reportHeight() {
+        var h = Math.max(
+            document.body.scrollHeight || 0,
+            document.documentElement.scrollHeight || 0,
+            document.body.offsetHeight || 0,
+            document.documentElement.offsetHeight || 0
+        );
+        if (h < 1) h = 1;
+        try { window.parent.postMessage({_trh:h}, '*'); } catch(e) {}
+    }
+    // 延迟多次报告，确保内容完全渲染
+    setTimeout(reportHeight, 30);
+    setTimeout(reportHeight, 150);
+    setTimeout(reportHeight, 500);
+    // 监听 DOM 变化自动上报
+    var observer = new MutationObserver(function() { setTimeout(reportHeight, 30); });
+    observer.observe(document.body, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['class', 'style', 'hidden']
+    });
+    // 监听父页面命令
+    window.addEventListener('message', function(e) {
+        if (!e.data || typeof e.data._trc !== 'string') return;
+        var d = document;
+        var panel = d.getElementById('trace-debug-panel');
+        var container = d.querySelector('#trace-tools-box .tabs-container');
+        var logo = d.querySelector('#trace-tools-box .trace-logo');
+        switch(e.data._trc) {
+            case 'esc':
+                // trace-debug-panel: 隐藏面板
+                if (panel) { panel.style.display = 'none'; }
+                // trace-tools-box: 收起 tabs
+                if (container) { container.classList.remove('visible'); }
+                if (logo) { logo.classList.remove('hidden'); }
+                setTimeout(reportHeight, 200);
+                break;
+            case 'show':
+                // trace-debug-panel: 显示面板
+                if (panel) { panel.style.display = 'block'; }
+                setTimeout(reportHeight, 200);
+                break;
+        }
+    });
+})();
+</script>
+JS;
+    }
+
+    /**
+     * 生成父页面 iframe 容器样式
+     *
+     * @param  string  $iframeId
+     * @return string <style> 标签
+     */
+    protected function getParentIframeStyle(string $iframeId): string
+    {
+        return <<<CSS
+<style>
+#{$iframeId} {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    z-index: 2147483646 !important;
+    border: none !important;
+    background: transparent !important;
+    transition: height 0.25s ease !important;
+    height: 320px !important;
+    max-height: 100vh !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+</style>
+CSS;
+    }
+
+    /**
+     * 生成父页面管理脚本
+     *
+     * 负责：
+     * - 接收 iframe 高度上报并动态调整 iframe 尺寸
+     * - 全局 ESC 键隐藏面板、Ctrl+Shift+D 重新打开
+     * - 面板隐藏后显示浮动重开按钮
+     *
+     * @param  string  $iframeId
+     * @return string <script> 标签
+     */
+    protected function getParentIframeScript(string $iframeId): string
+    {
+        $escapedId = addslashes($iframeId);
+        return <<<JS
+<script>
+(function() {
+    'use strict';
+    var iframe = document.getElementById('{$escapedId}');
+    if (!iframe) return;
+
+    // 接收 iframe 消息（高度上报 + 命令）
+    window.addEventListener('message', function(e) {
+        if (!e.data) return;
+        // 高度上报
+        if (typeof e.data._trh === 'number') {
+            if (!iframe || !document.body.contains(iframe)) return;
+            var h = Math.max(e.data._trh, 1);
+            if (iframe.style.display !== 'none') {
+                iframe.style.height = h + 'px';
+            }
+        }
+        // iframe 内的 ESC 命令 → 隐藏 iframe
+        if (e.data._trc === 'esc' && iframe.style.display !== 'none') {
+            iframe.style.display = 'none';
+            iframe.style.height = '0px';
+            iframe.style.pointerEvents = 'none';
+            showReopenBtn();
+        }
+    });
+
+    // 全局键盘快捷键
+    function handleKeydown(e) {
+        if (!iframe || !document.body.contains(iframe)) {
+            document.removeEventListener('keydown', handleKeydown);
+            return;
+        }
+        // ESC: 隐藏面板
+        if (e.key === 'Escape') {
+            if (iframe.style.display !== 'none') {
+                iframe.style.display = 'none';
+                iframe.style.height = '0px';
+                iframe.style.pointerEvents = 'none';
+                showReopenBtn();
+                try { iframe.contentWindow.postMessage({_trc:'esc'}, '*'); } catch(ex) {}
+            }
+        }
+        // Ctrl+Shift+D: 重新打开
+        if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+            e.preventDefault();
+            iframe.style.display = 'block';
+            iframe.style.height = '50px';
+            iframe.style.pointerEvents = 'auto';
+            hideReopenBtn();
+            try { iframe.contentWindow.postMessage({_trc:'show'}, '*'); } catch(ex) {}
+        }
+    }
+    document.addEventListener('keydown', handleKeydown);
+
+    // 浮动重开按钮
+    var reopenBtn = null;
+    function showReopenBtn() {
+        if (reopenBtn) return;
+        reopenBtn = document.createElement('div');
+        reopenBtn.id = 'trace-reopen-btn';
+        reopenBtn.innerHTML = '&#x1F4CA;';
+        reopenBtn.title = '打开 Trace 调试面板 (Ctrl+Shift+D)';
+        var s = reopenBtn.style;
+        s.position = 'fixed';
+        s.bottom = '10px';
+        s.right = '10px';
+        s.zIndex = '2147483647';
+        s.width = '40px';
+        s.height = '40px';
+        s.borderRadius = '20px';
+        s.background = 'linear-gradient(135deg, #667eea, #764ba2)';
+        s.color = '#fff';
+        s.fontSize = '20px';
+        s.display = 'flex';
+        s.alignItems = 'center';
+        s.justifyContent = 'center';
+        s.cursor = 'pointer';
+        s.boxShadow = '0 4px 15px rgba(102,126,234,.3)';
+        s.border = 'none';
+        s.userSelect = 'none';
+        s.transition = 'transform .2s';
+        reopenBtn.addEventListener('click', function() {
+            iframe.style.display = 'block';
+            iframe.style.height = '50px';
+            iframe.style.pointerEvents = 'auto';
+            hideReopenBtn();
+            try { iframe.contentWindow.postMessage({_trc:'show'}, '*'); } catch(ex) {}
+        });
+        reopenBtn.addEventListener('mouseenter', function() { this.style.transform = 'scale(1.1)'; });
+        reopenBtn.addEventListener('mouseleave', function() { this.style.transform = 'scale(1)'; });
+        document.body.appendChild(reopenBtn);
+    }
+    function hideReopenBtn() {
+        if (reopenBtn) { reopenBtn.remove(); reopenBtn = null; }
+    }
+})();
+</script>
+JS;
+    }
+
+    /**
+     * 读取扩展包静态资源文件内容
+     *
+     * @param  string  $filename  文件名（如 'trace.css', 'trace.js'）
+     * @return string  文件内容，读取失败时返回空字符串
+     */
+    protected function getAssetContent(string $filename): string
+    {
+        // 基于当前文件位置推导包根目录
+        // __DIR__ = src/Trace/Traits/ → 上溯三级到包根
+        $basePath = dirname(__DIR__, 3);
+        $subDir = pathinfo($filename, PATHINFO_EXTENSION); // 'css' or 'js'
+        $filePath = $basePath . '/src/Resources/' . $subDir . '/' . $filename;
+
+        if (file_exists($filePath)) {
+            $content = @file_get_contents($filePath);
+            return $content !== false ? $content : '';
+        }
+
+        // 备选：直接在 Resources 根目录查找
+        $altPath = $basePath . '/src/Resources/' . ltrim($filename, '/');
+        if (file_exists($altPath)) {
+            $content = @file_get_contents($altPath);
+            return $content !== false ? $content : '';
+        }
+
+        return '';
     }
 }
