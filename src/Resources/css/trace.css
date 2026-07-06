@@ -21,7 +21,8 @@
 
 /* ===== 根容器 ===== */
 #trace-tools-box {
-    position: fixed;
+    position: relative;
+    min-height: 20px;
     z-index: 2147483647;
     font-size: 14px;
     text-align: left;
@@ -45,9 +46,10 @@
 
 /* ===== Logo 图标 ===== */
 #trace-tools-box .trace-logo {
-    position: fixed;
+    position: absolute;
     bottom: 0;
     right: 0;
+    width: 80px;
     height: 20px;
     cursor: pointer;
     z-index: 2147483647;
@@ -62,12 +64,6 @@
     border-radius: 4px 0 0 0;
     box-shadow: -2px -2px 8px rgba(0, 0, 0, 0.3);
     transition: all var(--tf-transition);
-}
-
-#trace-tools-box .trace-logo:hover {
-    background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);
-    transform: translateY(-2px);
-    box-shadow: -2px -4px 12px rgba(0, 0, 0, 0.4);
 }
 
 #trace-tools-box .trace-logo .logo {
@@ -94,11 +90,8 @@
 
 /* ===== Tabs 容器 ===== */
 #trace-tools-box .tabs-container {
-    position: fixed;
-    bottom: 0;
-    left: 0;
     width: 100%;
-    height: 320px;
+    min-height: 320px;
     max-height: 85vh;
     background: linear-gradient(to bottom, var(--tf-bg-secondary) 0%, var(--tf-bg-primary) 100%);
     border-top: 2px solid var(--tf-accent);
@@ -125,9 +118,10 @@
     border-bottom: 1px solid var(--tf-border);
     background: linear-gradient(to right, var(--tf-bg-secondary) 0%, var(--tf-bg-primary) 100%);
     height: 42px;
+    min-height: 42px;
+    max-height: 42px;
     width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: hidden;
     scrollbar-width: thin;
     scrollbar-color: #475569 var(--tf-bg-secondary);
 }
@@ -155,16 +149,21 @@
 }
 
 #trace-tools-box .tabs-item {
-    padding: 8px 8px;
+    /* 固定盒模型尺寸，杜绝 font-weight 切换导致高度变化 */
+    height: 42px;
+    line-height: 42px;
+    padding: 0 10px;
     cursor: pointer;
     font-weight: 500;
     font-size: 14px;
     color: var(--tf-text-secondary);
-    transition: all var(--tf-transition);
     white-space: nowrap;
     border: none;
+    border-bottom: 2px solid transparent;
     display: inline-flex;
     align-items: center;
+    flex-shrink: 0;
+    box-sizing: border-box;
 }
 
 #trace-tools-box .tabs-item:hover {
@@ -173,10 +172,10 @@
 }
 
 #trace-tools-box .tabs-item.active {
-    background: linear-gradient(to bottom, var(--tf-accent) 0%, var(--tf-accent-dark) 100%);
-    color: #fff;
+    background-color: rgba(59, 130, 246, 0.15);
+    color: var(--tf-accent-light);
     font-weight: 600;
-    box-shadow: 0 -2px 8px rgba(59, 130, 246, 0.3);
+    border-bottom-color: var(--tf-accent);
 }
 
 #trace-tools-box .tabs-close {
@@ -520,8 +519,8 @@
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
     #trace-tools-box .tabs-container { height: 280px; max-height: 80vh; }
-    #trace-tools-box .tabs-header { height: 48px; padding: 0 8px; }
-    #trace-tools-box .tabs-item { padding: 8px 12px; font-size: 12px; }
+    #trace-tools-box .tabs-header { height: 48px; min-height: 48px; max-height: 48px; padding: 0 8px; }
+    #trace-tools-box .tabs-item { height: 48px; line-height: 48px; padding: 0 12px; font-size: 12px; }
     #trace-tools-box li .json-arrow-pre-wrapper,
     #trace-tools-box li .json-string-content { flex: 0 0 100%; max-width: 100%; }
     #trace-tools-box li .json-right { width: auto; margin-left: auto; }

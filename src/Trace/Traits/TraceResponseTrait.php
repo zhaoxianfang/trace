@@ -795,7 +795,7 @@ SQL;
 
         return $style . "\n"
             . '<iframe id="' . $iframeId . '" srcdoc="' . $srcdoc . '" '
-            . 'style="position:fixed;bottom:0;left:0;width:100%;z-index:2147483646;border:none;background:transparent;transition:height .25s ease;height:320px;max-height:100vh;" '
+            . 'style="position:fixed;bottom:0;right:0;left:auto;width:80px;z-index:2147483646;border:none;background:transparent;transition:width .25s ease,height .25s ease;height:20px;max-height:100vh;" '
             . 'title="Trace Debug Panel" scrolling="no" frameborder="0" allowtransparency="true">'
             . '</iframe>' . "\n"
             . $script;
@@ -881,7 +881,7 @@ SQL;
             case 'esc':
                 // trace-debug-panel: 隐藏面板
                 if (panel) { panel.style.display = 'none'; }
-                // trace-tools-box: 收起 tabs
+                // trace-tools-box: 收起 tabs，显示 logo
                 if (container) { container.classList.remove('visible'); }
                 if (logo) { logo.classList.remove('hidden'); }
                 setTimeout(reportHeight, 200);
@@ -889,6 +889,9 @@ SQL;
             case 'show':
                 // trace-debug-panel: 显示面板
                 if (panel) { panel.style.display = 'block'; }
+                // trace-tools-box: 展开 tabs，隐藏 logo
+                if (container) { container.classList.add('visible'); }
+                if (logo) { logo.classList.add('hidden'); }
                 setTimeout(reportHeight, 200);
                 break;
         }
@@ -911,13 +914,18 @@ JS;
 #{$iframeId} {
     position: fixed !important;
     bottom: 0 !important;
-    left: 0 !important;
-    width: 100% !important;
+    /* left/right/width/height 由 JS 动态控制，禁止 !important 以免覆盖 JS 内联样式 */
+    right: 0;
+    left: auto;
+    width: 80px;
+    height: 20px;
     z-index: 2147483646 !important;
     border: none !important;
     background: transparent !important;
-    transition: height 0.25s ease !important;
-    height: 320px !important;
+    /* 禁用 CSS transition：transition 会导致 iframe 尺寸变化延迟 250ms，
+       与 iframe 内 MutationObserver 的 reportHeight() 产生竞态条件，
+       使得 _trh 消息在过渡中拿到旧尺寸，错误地触发 re-expand。 */
+    transition: none !important;
     max-height: 100vh !important;
     display: block !important;
     margin: 0 !important;
@@ -948,15 +956,74 @@ CSS;
     var iframe = document.getElementById('{$escapedId}');
     if (!iframe) return;
 
+    // 展开态尺寸常量
+    var EXPANDED_WIDTH = '100vw';
+    var EXPANDED_HEIGHT = 320; // px，固定高度，内容区自行滚动
+    var COLLAPSED_WIDTH = '80px';
+    var COLLAPSED_HEIGHT = 20;
+
+    // 冷却期状态：折叠后短时间内 _trh 消息不可靠（iframe 视口还在收缩），
+    // 阻止 _trh 误触 re-expand，并在冷却结束后根据最后收到的 _trh 值决定是否需要展开
+    var collapseCooldown = false;
+    var cooldownTimer = null;
+    var pendingTrh = null; // 冷却期内最后收到的 _trh 高度值
+
+    // 设置 iframe 为展开态（全宽面板，固定 320px 高度）
+    function setExpanded() {
+        iframe.style.left = '0';
+        iframe.style.right = 'auto';
+        iframe.style.width = EXPANDED_WIDTH;
+        iframe.style.height = EXPANDED_HEIGHT + 'px';
+        iframe.style.pointerEvents = 'auto';
+        iframe.style.display = 'block';
+    }
+
+    // 设置 iframe 为折叠态（右下角 logo），完整恢复初始样式
+    function setCollapsed() {
+        iframe.style.left = 'auto';
+        iframe.style.right = '0';
+        iframe.style.width = COLLAPSED_WIDTH;
+        iframe.style.height = COLLAPSED_HEIGHT + 'px';
+        iframe.style.pointerEvents = 'auto';
+        // 将 display 重置为空字符串，让 CSS 中 display: block !important 生效，
+        // 避免 Ctrl+Shift+D 等历史操作遗留的 inline display 值干扰布局
+        iframe.style.display = '';
+    }
+
+    // 启动折叠冷却期
+    function startCollapseCooldown() {
+        collapseCooldown = true;
+        pendingTrh = null;
+        if (cooldownTimer) clearTimeout(cooldownTimer);
+        cooldownTimer = setTimeout(function() {
+            collapseCooldown = false;
+            cooldownTimer = null;
+            // 冷却结束：若期间收到展开高度请求（h > 50），则执行展开
+            if (pendingTrh !== null && pendingTrh > 50) {
+                setExpanded();
+            }
+            pendingTrh = null;
+        }, 400);
+    }
+
     // 接收 iframe 消息（高度上报 + 命令）
     window.addEventListener('message', function(e) {
         if (!e.data) return;
-        // 高度上报
+        // 高度上报：仅用于判断折叠/展开状态切换，不动态调整尺寸
         if (typeof e.data._trh === 'number') {
             if (!iframe || !document.body.contains(iframe)) return;
             var h = Math.max(e.data._trh, 1);
+            if (collapseCooldown) {
+                // 冷却期内只记录最新高度，不执行任何尺寸操作
+                pendingTrh = h;
+                return;
+            }
             if (iframe.style.display !== 'none') {
-                iframe.style.height = h + 'px';
+                if (h > 50) {
+                    setExpanded();
+                } else {
+                    setCollapsed();
+                }
             }
         }
         // iframe 内的 ESC 命令 → 隐藏 iframe
@@ -965,6 +1032,11 @@ CSS;
             iframe.style.height = '0px';
             iframe.style.pointerEvents = 'none';
             showReopenBtn();
+        }
+        // iframe 内的折叠命令（trace-tools-box 关闭按钮/ESC）→ 折叠 iframe 到右下角
+        if (e.data._trc === 'collapsed' && iframe.style.display !== 'none') {
+            setCollapsed();
+            startCollapseCooldown();
         }
     });
 
@@ -984,12 +1056,11 @@ CSS;
                 try { iframe.contentWindow.postMessage({_trc:'esc'}, '*'); } catch(ex) {}
             }
         }
-        // Ctrl+Shift+D: 重新打开
+        // Ctrl+Shift+D: 重新打开（展开态）
         if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
             e.preventDefault();
             iframe.style.display = 'block';
-            iframe.style.height = '50px';
-            iframe.style.pointerEvents = 'auto';
+            setExpanded();
             hideReopenBtn();
             try { iframe.contentWindow.postMessage({_trc:'show'}, '*'); } catch(ex) {}
         }
@@ -1025,8 +1096,7 @@ CSS;
         s.transition = 'transform .2s';
         reopenBtn.addEventListener('click', function() {
             iframe.style.display = 'block';
-            iframe.style.height = '50px';
-            iframe.style.pointerEvents = 'auto';
+            setExpanded();
             hideReopenBtn();
             try { iframe.contentWindow.postMessage({_trc:'show'}, '*'); } catch(ex) {}
         });

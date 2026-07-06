@@ -167,6 +167,8 @@ if (!window.__traceInitialized) {
                 tabsContainerDom.classList.remove('visible');
                 tabsLogoDom.classList.remove('hidden');
                 trace_reset_allowed_value();
+                // 立即通知父页面折叠 iframe（不依赖 MutationObserver 高度上报）
+                try { window.parent.postMessage({_trc:'collapsed'}, '*'); } catch(ex) {}
             }
         });
     }
@@ -180,6 +182,8 @@ if (!window.__traceInitialized) {
             if (tabsContainerDom && tabsLogoDom && tabsContainerDom.classList.contains('visible')) {
                 tabsContainerDom.classList.remove('visible');
                 tabsLogoDom.classList.remove('hidden');
+                // 立即通知父页面折叠 iframe
+                try { window.parent.postMessage({_trc:'collapsed'}, '*'); } catch(ex) {}
             }
         });
     }

@@ -20,10 +20,7 @@
 
 /* ===== 面板容器 ===== */
 #trace-debug-panel {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    position: relative;
     z-index: 999999 !important;
     font-size: 14px;
     line-height: 1.5;
