@@ -146,6 +146,7 @@
     flex-wrap: nowrap;
     align-items: center;
     gap: 2px;
+    overflow: auto;
 }
 
 #trace-tools-box .tabs-item {
@@ -519,7 +520,7 @@
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
     #trace-tools-box .tabs-container { height: 280px; max-height: 80vh; }
-    #trace-tools-box .tabs-header { height: 48px; min-height: 48px; max-height: 48px; padding: 0 8px; }
+    #trace-tools-box .tabs-header { height: 48px; min-height: 48px; max-height: 48px; padding: 0; }
     #trace-tools-box .tabs-item { height: 48px; line-height: 48px; padding: 0 12px; font-size: 12px; }
     #trace-tools-box li .json-arrow-pre-wrapper,
     #trace-tools-box li .json-string-content { flex: 0 0 100%; max-width: 100%; }
