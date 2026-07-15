@@ -68,6 +68,12 @@ class TraceMiddleware
         // 获取 Trace 处理器实例
         $this->handle = app('trace');
 
+        // 重置请求级状态：保证常驻进程（Octane/Swoole）下各请求数据隔离，
+        // 清空上一请求残留的采集数据，避免串味与内存累积；
+        // 同时重置死循环防护器的计时/计数（其静态状态在常驻进程下不会自动归零）。
+        $this->handle->resetRequestState();
+        \zxf\Trace\InfiniteLoopGuard::reset();
+
         // 注册 shutdown 处理函数（处理 die/exit 的情况）
         $this->handle->registerShutdownHandle($request);
 
@@ -138,7 +144,10 @@ class TraceMiddleware
 
         // 检查是否为 AJAX 请求或期望 JSON 的请求
         // 这类请求通常不需要 HTML 注入
-        if ($request->ajax() || $request->expectsJson()) {
+        // 注意：$request->ajax() 在 Laravel 11+ 中已被移除，
+        // 使用 method_exists 兼容旧版本，避免抛 BadMethodCallException
+        $isAjax = (method_exists($request, 'ajax') && $request->ajax()) || $request->expectsJson();
+        if ($isAjax) {
             return false;
         }
 

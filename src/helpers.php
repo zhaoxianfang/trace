@@ -194,11 +194,19 @@ if (! function_exists('get_trace_module_name')) {
                 return $toUnderlineConvert ? 'command' : 'Command';
             }
             if (! empty($request = request()) && ! empty($route = $request->route())) {
-                $routeNamespace = $route->getAction()['namespace'];
-                $modulesNamespaceArr = array_filter(explode('\\', explode('Http\Controllers', $routeNamespace)[0]));
-                // 判断 $route->uri() 字符串中是否包含 无路由回调fallback ||
-                if (! str_contains($route->uri(), 'fallback') && ! empty($modulesNamespaceArr) && $modulesNamespaceArr[0] == trace_modules_name()) {
-                    return $toUnderlineConvert ? strtolower(preg_replace('/(?<=[a-z])([A-Z])/', '_$1', $modulesNamespaceArr[1])) : $modulesNamespaceArr[1];
+                // Laravel 11+ 的 Route::getAction() 不再保证包含 'namespace' 键，
+                // 使用带默认值的 getAction($key, $default) 并做字符串校验，
+                // 避免 "Undefined array key" 警告以及 explode(null) 抛出 TypeError
+                $routeNamespace = $route->getAction('namespace') ?? '';
+                if (is_string($routeNamespace) && $routeNamespace !== '') {
+                    $modulesNamespaceArr = array_filter(explode('\\', explode('Http\Controllers', $routeNamespace)[0]));
+                    // 判断 $route->uri() 字符串中是否包含 无路由回调fallback ||
+                    if (! str_contains($route->uri(), 'fallback') && ! empty($modulesNamespaceArr) && ($modulesNamespaceArr[0] ?? '') == trace_modules_name()) {
+                        $moduleName = $modulesNamespaceArr[1] ?? '';
+                        if ($moduleName !== '') {
+                            return $toUnderlineConvert ? strtolower(preg_replace('/(?<=[a-z])([A-Z])/', '_$1', $moduleName)) : $moduleName;
+                        }
+                    }
                 }
             }
             if (! empty($request = request())) {
@@ -209,7 +217,7 @@ if (! function_exists('get_trace_module_name')) {
             }
 
             return $toUnderlineConvert ? 'app' : 'App';
-        } catch (\Exception $err) {
+        } catch (\Throwable $err) {
             return get_trace_url_module_name($toUnderlineConvert);
         }
     }
@@ -256,7 +264,7 @@ if (! function_exists('set_protected_attr')) {
         $reflectionClass = new ReflectionClass($obj);
         try {
             $reflectionClass->setStaticPropertyValue($filed, $value);
-        } catch (\Exception $err) {
+        } catch (\Throwable $err) {
             $reflectionProperty = $reflectionClass->getProperty($filed);
             // PHP 8.1+ 不再需要 setAccessible()，默认为 true
             if (PHP_VERSION_ID < 80100) {

@@ -86,7 +86,13 @@ class TraceExceptionHandler implements ExceptionHandler
                 return;
             }
 
-            // 初始化错误信息
+            // 不需要报告的异常直接跳过，且不调用 initError，
+            // 避免污染静态异常状态（否则会影响后续真实异常的渲染输出）
+            if ($this->shouldntReport($e)) {
+                return;
+            }
+
+            // 初始化错误信息（仅当确实需要报告时）
             try {
                 $this->trace->initError($e);
             } catch (\Throwable $initError) {
@@ -95,17 +101,28 @@ class TraceExceptionHandler implements ExceptionHandler
 
             $exceptionHash = $this->getExceptionHash($e);
 
-            // 定义为不需要被报告的异常 || 检查是否已经报告过
-            if ($this->shouldntReport($e) || $this->hasReported($exceptionHash)) {
+            // 检查是否已经报告过（跨请求去重）
+            if ($this->hasReported($exceptionHash)) {
                 return;
             }
 
             // 防止内存泄漏，限制存储的异常数量
             $this->cleanupReportedExceptions();
 
-            // 标记为已报告
+            // 获取当前请求 ID，用于常驻进程环境下的按请求清理
+            $requestId = method_exists($this->trace, 'getRequestId')
+                ? ($this->trace->getRequestId() ?? '')
+                : '';
+
+            // 标记为已报告（值存储请求 ID，供 clearRequestExceptions 精确清理）
             $this->reportedHashes[$exceptionHash] = microtime(true);
-            self::$requestExceptionHashes[$requestExceptionHash] = true;
+            self::$requestExceptionHashes[$requestExceptionHash] = $requestId;
+
+            // 防止常驻进程（Octane/Swoole）下静态哈希无限累积导致 OOM
+            if (count(self::$requestExceptionHashes) > 5000) {
+                self::$requestExceptionHashes = array_slice(self::$requestExceptionHashes, -2500, null, true);
+            }
+
             $this->lastException = $e;
 
             // 执行报告流程
@@ -218,10 +235,9 @@ class TraceExceptionHandler implements ExceptionHandler
     protected function doRender($request, Throwable $e): Response
     {
         try {
-            // 初始化错误信息（如果尚未初始化）
-            if (! $this->trace::$initErr) {
-                $this->trace->initError($e);
-            }
+            // 始终用当前异常重新初始化错误信息，避免被上一次报告的异常
+            // （尤其是 shouldntReport 的异常）污染 $message/$code，导致渲染出错。
+            $this->trace->initError($e);
 
             // 1. 尝试自定义回调处理
             $callbackResponse = $this->tryCustomCallback($e);
@@ -395,12 +411,14 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     protected function getExceptionHash(Throwable $e): string
     {
+        // 使用异常自身稳定的身份特征（类、文件、行号、代码），
+        // 不再依赖可能被归一化过的静态 $message/$code，
+        // 避免「不同异常被错误去重」或「同一异常无法去重」。
         return md5(
             get_class($e).
             $e->getFile().
             $e->getLine().
-            $this->trace::$message.
-            $this->trace::$code
+            ($e->getCode() ?? '')
         );
     }
 
@@ -507,12 +525,17 @@ class TraceExceptionHandler implements ExceptionHandler
      */
     public static function clearRequestExceptions(string $requestId): void
     {
-        // 清理包含特定请求 ID 的所有异常哈希
+        if ($requestId === '') {
+            return;
+        }
+
+        // 哈希值为 md5 十六进制串，并不包含请求 ID 文本，
+        // 因此必须按“存储的请求 ID 值”进行精确过滤以实现按请求清理。
         self::$requestExceptionHashes = array_filter(
             self::$requestExceptionHashes,
-            function ($hash) use ($requestId) {
-                // 保留不包含当前请求 ID 的哈希
-                return ! str_contains($hash, $requestId);
+            function ($storedRequestId) use ($requestId) {
+                // 保留不属于当前请求 ID 的记录
+                return $storedRequestId !== $requestId;
             }
         );
     }

@@ -45,13 +45,18 @@ class ViewGuard
             return true;
         }
 
-        // 内部视图需要验证调用来源
+        // 内部视图需要验证调用来源（必须来自 zxf\Trace 命名空间）
         if (in_array($viewName, self::$internalViews, true)) {
             return self::isInternalCall();
         }
 
-        // 其他视图默认允许（向后兼容）
-        return true;
+        // 允许 trace::errors.* 系列（兜底异常处理器可能引用，视图可由发布/自定义提供）
+        if (str_starts_with($viewName, 'trace::errors.')) {
+            return true;
+        }
+
+        // 默认拒绝：其他 trace:: 视图一律禁止外部直接访问，防止内部视图泄露
+        return false;
     }
 
     /**

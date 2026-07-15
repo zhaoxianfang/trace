@@ -14,6 +14,11 @@ namespace zxf\Trace\Traits;
 trait ModelCollectorTrait
 {
     /**
+     * 单次请求最多记录的模型事件数量（防止内存无限增长）
+     */
+    protected int $maxModelCount = 1000;
+
+    /**
      * 监听模型事件
      *
      * 注意：使用静态标记确保事件监听器只注册一次，避免重复监听
@@ -59,6 +64,16 @@ trait ModelCollectorTrait
     protected function logModelEvent($listenString, $model, $event): void
     {
         if (self::$currentRequestId !== $this->requestId) {
+            return;
+        }
+
+        // 内存/数量自保护：一旦内存临界或记录数超限即停止采集，
+        // 从根源避免本调试包在海量模型加载时引发 OOM
+        if ($this->isMemoryCritical()) {
+            return;
+        }
+        $currentList = self::$modelList[$this->requestId] ?? [];
+        if (count($currentList) >= $this->maxModelCount) {
             return;
         }
 

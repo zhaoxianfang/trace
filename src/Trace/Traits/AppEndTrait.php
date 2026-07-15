@@ -29,6 +29,12 @@ trait AppEndTrait
             return;
         }
 
+        // 常驻进程（Octane/Swoole）下，$request 每次都是新对象，
+        // 以 spl_object_id 为键会导致此静态数组随请求无限增长，超过上限即清空避免内存泄漏
+        if (count($registeredRequests) > 2000) {
+            $registeredRequests = [];
+        }
+
         $registeredRequests[$requestId] = true;
 
         // 注册 shutdown 函数，在脚本结束时执行
@@ -48,7 +54,11 @@ trait AppEndTrait
             }
 
             // 捕获并获取输出缓冲区的内容
-            $output = ob_get_clean();
+            // 使用循环收集所有缓冲层内容，避免多层 ob 时仅取到最内层而丢失外层内容
+            $output = '';
+            while (ob_get_level() > 0) {
+                $output = ob_get_clean() . $output;
+            }
 
             // 检查输出是否为空
             if (empty($output)) {

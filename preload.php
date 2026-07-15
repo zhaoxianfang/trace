@@ -66,6 +66,10 @@ foreach ($coreFiles as $file) {
 }
 
 // 记录预加载结果（仅在调试模式）
-if (defined('APP_DEBUG') && APP_DEBUG) {
+$preloadDebug = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? getenv('APP_DEBUG') ?? false;
+$preloadDebug = is_string($preloadDebug)
+    ? in_array(strtolower($preloadDebug), ['true', '1', 'yes', 'on'], true)
+    : (bool) $preloadDebug;
+if ($preloadDebug) {
     error_log("[Trace Preload] Compiled: {$compiled}, Failed: {$failed}");
 }

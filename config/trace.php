@@ -170,6 +170,9 @@ return [
 
         // 已报告异常最大条目数
         'max_reported_exceptions' => 100,
+
+        // 单次请求最多记录的模型事件数量（防止内存无限增长导致 OOM）
+        'max_model_count' => 1000,
     ],
 
     /**

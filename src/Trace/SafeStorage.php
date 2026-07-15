@@ -36,7 +36,12 @@ class SafeStorage
             }
             
             // 写入文件，使用临时文件+重命名策略确保原子性
-            $tempFile = $path . '.tmp.' . uniqid('', true);
+            // 使用 tempnam 生成防碰撞的临时文件名，避免高并发下 uniqid 碰撞导致互相覆盖
+            $tempFile = tempnam($dir, 'trace_');
+            if ($tempFile === false) {
+                EmergencyRenderer::logError("Failed to create temp file in: {$dir}", 'SafeStorage::filePut');
+                return false;
+            }
             $result = @file_put_contents($tempFile, $content, LOCK_EX);
             
             if ($result === false) {

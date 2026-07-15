@@ -189,6 +189,43 @@ class Handle
         $this->maxSqlListSize = $limits['max_sql_count'] ?? 500;
         $this->maxSqlLength = $limits['max_sql_length'] ?? 1500;
         $this->maxBindings = $limits['max_bindings'] ?? 50;
+        $this->maxModelCount = $limits['max_model_count'] ?? 1000;
+    }
+
+    /**
+     * 获取 PHP 内存限制（字节），-1 表示无限制
+     */
+    protected function getMemoryLimitBytes(): int
+    {
+        $limit = trim((string) ini_get('memory_limit'));
+        if ($limit === '' || $limit === '-1') {
+            return -1;
+        }
+        $last = strtolower($limit[strlen($limit) - 1]);
+        $value = (int) $limit;
+
+        return match ($last) {
+            'g' => $value * 1024 * 1024 * 1024,
+            'm' => $value * 1024 * 1024,
+            'k' => $value * 1024,
+            default => $value,
+        };
+    }
+
+    /**
+     * 内存是否处于临界状态（>= 90% 限制）。
+     *
+     * 采集器在写入前调用：一旦内存临界即停止采集，
+     * 从根源避免本调试包自身引发 “Allowed memory size ... exhausted” 致命错误。
+     */
+    public function isMemoryCritical(): bool
+    {
+        $limit = $this->getMemoryLimitBytes();
+        if ($limit <= 0) {
+            return false;
+        }
+
+        return memory_get_usage(true) > $limit * 0.9;
     }
 
     /**
@@ -197,6 +234,46 @@ class Handle
     public function getRequestId(): ?string
     {
         return $this->requestId;
+    }
+
+    /**
+     * 重置请求级状态（常驻进程 / 每次请求开始时调用）
+     *
+     * Handle 以单例形式存在。在 Octane / Swoole 等常驻进程下构造函数只执行一次，
+     * 若不重置，requestId 与采集数据会跨请求共享，导致：
+     *  - SQL / 模型 / 视图数据在多个请求间串味
+     *  - sqlList 等数组无限增长直至 OOM
+     * 因此中间件在每个请求开始时调用本方法，生成全新的请求身份并清空上一请求残留。
+     */
+    public function resetRequestState(): void
+    {
+        if (! is_enable_trace()) {
+            return;
+        }
+
+        $oldRequestId = $this->requestId;
+
+        // 生成全新的请求身份，保证采集器按请求隔离
+        $this->requestId = uniqid('trace_', true);
+        self::$currentRequestId = $this->requestId;
+        self::$requestCounter++;
+
+        // 更新当前请求相关引用（常驻进程下请求对象会随每个请求变化）
+        if ($this->app) {
+            try {
+                $this->request = $this->app['request'];
+                $this->router = $this->app['router'];
+            } catch (\Throwable) {
+                // 请求对象暂不可用时忽略，下次请求再刷新
+            }
+        }
+
+        // 清空上一个请求遗留的采集数据，避免跨请求污染与内存累积
+        unset(self::$modelList[$oldRequestId]);
+        unset(self::$modelEventTypes[$oldRequestId]);
+        unset(self::$viewDataCollector[$oldRequestId]);
+        $this->sqlList = [];
+        $this->messages = [];
     }
 
     /**
@@ -330,6 +407,14 @@ class Handle
 
             $trace[$title . $showTips] = ! empty($result) ? $result : $this->getEmptyTips($name);
         }
+
+        // 释放请求级采集数据：每个请求渲染完成后清空，
+        // 既降低内存占用，也避免常驻进程（Octane/Swoole）下数据跨请求累积。
+        $this->sqlList = [];
+        $this->messages = [];
+        unset(self::$modelList[$this->requestId]);
+        unset(self::$modelEventTypes[$this->requestId]);
+        unset(self::$viewDataCollector[$this->requestId]);
 
         try {
             $this->traceEndHandle($trace);

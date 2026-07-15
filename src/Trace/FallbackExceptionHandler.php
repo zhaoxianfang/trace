@@ -436,19 +436,15 @@ class FallbackExceptionHandler
     private static function isLaravelHandlerActive(): bool
     {
         try {
-            // 检查是否已经有响应被发送
+            // 若响应头已发送，说明 Laravel 已经接管并处理了异常/请求
             if (function_exists('headers_sent') && headers_sent()) {
                 return true;
             }
 
-            // 检查 Laravel 的异常处理器是否已注册
-            $previousHandler = set_exception_handler(null);
-            if ($previousHandler !== null) {
-                // 恢复处理器
-                restore_exception_handler();
-                return true;
-            }
-
+            // 注意：禁止调用 set_exception_handler(null) 来探测处理器是否存在，
+            // 那会移除当前活跃的 Laravel 异常处理器（致命副作用），
+            // 在 shutdown 阶段可能导致异常处理器丢失、错误页面无法渲染。
+            // 此处仅依据响应头是否已发送来判断，避免破坏 Laravel 的异常链条。
             return false;
         } catch (Throwable) {
             return false;

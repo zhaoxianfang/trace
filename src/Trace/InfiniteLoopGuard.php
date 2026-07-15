@@ -73,7 +73,7 @@ class InfiniteLoopGuard
                 // 设置内存告警阈值
                 if (function_exists('memory_get_usage')) {
                     $currentMemory = memory_get_usage(true);
-                    if ($currentMemory > $safeLimit * 0.9) {
+                    if ($currentMemory > $safeLimit * 0.95) {
                         self::triggerEmergencyResponse('内存使用接近限制', 500);
                     }
                 }
@@ -273,6 +273,9 @@ HTML;
         }
 
         $limit = trim($limit);
+        if ($limit === '') {
+            return -1; // 无法解析，视为无限制
+        }
         $last = strtolower($limit[strlen($limit) - 1]);
         $value = (int) $limit;
 

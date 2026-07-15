@@ -180,10 +180,8 @@ class CustomExceptionHandler
     private static function handleExceptionRender($request, \Throwable $e, Handle $trace)
     {
         try {
-            // 初始化错误信息
-            if (! $trace::$initErr) {
-                $trace->initError($e);
-            }
+            // 始终为当前异常初始化错误信息，避免复用上一次异常的静态状态
+            $trace->initError($e);
 
             // 运行自定义闭包回调
             $callbackResult = $trace->runCallbackHandle($e);
@@ -235,10 +233,8 @@ class CustomExceptionHandler
     private static function handleExceptionReport(\Throwable $e, Handle $trace): bool
     {
         try {
-            // 初始化错误信息
-            if (! $trace::$initErr) {
-                $trace->initError($e);
-            }
+            // 始终为当前异常初始化错误信息，避免复用上一次异常的静态状态
+            $trace->initError($e);
 
             // 写入日志
             $trace->writeLog($e);

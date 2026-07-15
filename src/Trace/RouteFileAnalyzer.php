@@ -18,6 +18,11 @@ class RouteFileAnalyzer
     private static array $cache = [];
 
     /**
+     * 静态缓存最大条目数（用于常驻进程环境防止内存累积）
+     */
+    private const MAX_CACHE = 1000;
+
+    /**
      * 获取路由定义所在的文件及行号
      *
      * @param string $controllerClass
@@ -33,6 +38,11 @@ class RouteFileAnalyzer
         string $httpMethod = 'GET'
     ): ?array {
         $cacheKey = md5($controllerClass . '::' . $method . '::' . $compiledUri . '::' . $httpMethod);
+
+        // 常驻进程（Octane/Swoole）环境下，静态缓存可能跨请求累积，超过上限即清空
+        if (count(self::$cache) > self::MAX_CACHE) {
+            self::$cache = [];
+        }
 
         if (isset(self::$cache[$cacheKey])) {
             return self::$cache[$cacheKey] ?: null;

@@ -123,7 +123,12 @@ trait SqlCollectorTrait
     private function addQuery(QueryExecuted $event): void
     {
         try {
-            // 检查 SQL 列表大小限制
+            // 内存自保护：内存临界时停止采集，避免本包引发 OOM
+            if ($this->isMemoryCritical()) {
+                return;
+            }
+
+            // 检查 SQL 列表大小限制（保留最新记录）
             if (count($this->sqlList) >= $this->maxSqlListSize) {
                 array_shift($this->sqlList);
             }
@@ -253,6 +258,11 @@ trait SqlCollectorTrait
     {
         try {
             if (! $connection) {
+                return;
+            }
+
+            // 内存/数量自保护：避免事务事件在无上限情况下累积导致 OOM
+            if ($this->isMemoryCritical() || count($this->sqlList) >= $this->maxSqlListSize) {
                 return;
             }
 
