@@ -105,11 +105,35 @@ trait ExceptionCodeTrait
     }
 
     /**
+     * 规范化 HTTP 状态码
+     *
+     * 统一约束到合法范围 [100, 599]；空值、非整数、越界值一律回退为 500，
+     * 避免把业务码（如 0 / 1001 / 负数）或越界值直接当作 HTTP 状态码发出，
+     * 导致「响应错误码与实际不符」、客户端或代理解析异常。
+     * 与 respView() 的校验逻辑保持一致，消除 JSON / 视图两条响应路径的差异。
+     *
+     * @param  mixed  $code  原始状态码（可能是业务码或异常 code）
+     * @return int    规范化后的合法 HTTP 状态码
+     */
+    public function normalizeHttpCode(mixed $code): int
+    {
+        if (! is_int($code)) {
+            $code = (int) $code;
+        }
+
+        if ($code < 100 || $code > 599) {
+            return 500;
+        }
+
+        return $code;
+    }
+
+    /**
      * 展示错误异常给请求者( json )
      */
     public function respJson($message = '出错啦!', $code = 500)
     {
-        $code = empty($code) ? 500 : $code;
+        $code = $this->normalizeHttpCode($code);
 
         return response()->json([
             'success' => false,
@@ -134,12 +158,7 @@ trait ExceptionCodeTrait
      */
     public function respView($message = '出错啦!', $code = 500)
     {
-        $code = empty($code) ? 500 : (int)$code;
-        
-        // 验证状态码范围
-        if ($code < 100 || $code > 599) {
-            $code = 500;
-        }
+        $code = $this->normalizeHttpCode($code);
 
         try {
             // 检查视图系统是否可用
@@ -340,6 +359,7 @@ HTML;
      */
     public function respText(string $message, int $code = 500): \Illuminate\Http\Response
     {
+        $code = $this->normalizeHttpCode($code);
         $isCli = PHP_SAPI === 'cli';
         $isDebug = config('app.debug', false);
 

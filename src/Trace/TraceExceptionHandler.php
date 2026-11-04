@@ -42,6 +42,18 @@ class TraceExceptionHandler implements ExceptionHandler
     public function __construct(ExceptionHandler $handler)
     {
         $this->handler = $handler;
+
+        // 从配置读取已报告异常的最大条目数，未配置时回退到默认值 100
+        // （防止常驻进程下 reportedHashes 无限累积导致 OOM）
+        try {
+            $configured = config('trace.limits.max_reported_exceptions');
+            if (is_int($configured) && $configured > 0) {
+                $this->maxReportedExceptions = $configured;
+            }
+        } catch (\Throwable) {
+            // 配置读取失败时保留默认值，不影响主流程
+        }
+
         $this->initTrace();
     }
 
@@ -258,9 +270,19 @@ class TraceExceptionHandler implements ExceptionHandler
             // 如果 Trace 渲染失败，使用兜底渲染器
             EmergencyRenderer::logError($renderError, 'TraceExceptionHandler::doRender');
 
-            // 使用紧急渲染器作为最后手段
-            $code = $e->getCode() >= 100 && $e->getCode() < 600 ? $e->getCode() : 500;
-            EmergencyRenderer::render($e, $code);
+            // 使用紧急渲染器作为最后手段：返回最小响应而非 exit，
+            // 避免破坏 Laravel 的异常响应链与后续 terminate 逻辑
+            $code = is_int($e->getCode()) && $e->getCode() >= 100 && $e->getCode() < 600 ? $e->getCode() : 500;
+            try {
+                EmergencyRenderer::render($e, $code);
+            } catch (\Throwable $finalError) {
+                // 连兜底渲染都失败，输出最简文本并终止
+                if (! headers_sent()) {
+                    http_response_code(500);
+                    header('Content-Type: text/plain; charset=utf-8');
+                }
+                echo 'Server Error';
+            }
             exit(1);
         }
     }

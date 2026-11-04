@@ -254,7 +254,8 @@
 
 /* ===== JSON 标签 ===== */
 #trace-tools-box li .json-label {
-    flex: 1;
+    flex-shrink: 0;
+    min-width: 200px;
     line-height: 1.7;
     word-break: break-word;
     display: inline-block;
@@ -308,20 +309,36 @@
 /* ===== JSON 箭头和内容区 ===== */
 #trace-tools-box li .json-arrow-pre-wrapper,
 #trace-tools-box li .json-string-content {
-    flex: 0 0 75%;
-    max-width: 75%;
+    flex: 1;
+    max-width: none;
     display: flex;
     flex-direction: column;
 }
 
 #trace-tools-box li .json-right {
-    width: 80px;
+    width: 116px;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
     font-size: 12px;
     color: var(--tf-text-secondary);
     text-align: right;
     flex-shrink: 0;
+}
+
+/* Models Tab：中间内容区固定 100px 宽，flex 收缩为固定基值（覆盖上方 flex:1） */
+#trace-tools-box .tabs-content[data-content="models"] li .json-string-content {
+    width: 100px;
+    flex: 0 0 100px;
+    max-width: 100px;
+}
+
+/* Models Tab：标签列在内容固定 100px 时自动撑满剩余宽度，避免右侧留白 */
+#trace-tools-box .tabs-content[data-content="models"] li .json-label {
+    flex: 1 1 auto;
 }
 
 /* ===== SQL 分组 ===== */
@@ -412,8 +429,8 @@
     line-height: 1.6;
     word-break: break-word;
     display: inline-block;
-    min-width: 0;
-    max-width: calc(100% - 100px);
+    min-width: 200px;
+    max-width: calc(100% - 116px);
     color: var(--tf-text-primary);
     font-size: 13px;
     font-family: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Menlo', monospace;
@@ -421,9 +438,12 @@
 }
 
 #trace-tools-box .sql-group-content > li > .json-right {
-    width: 80px;
+    width: 116px;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    align-items: center;
     margin-left: 12px;
     font-size: 12px;
     color: var(--tf-text-secondary);

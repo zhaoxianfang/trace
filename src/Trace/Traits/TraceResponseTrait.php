@@ -196,16 +196,19 @@ trait TraceResponseTrait
                 $label = is_string($key) ? $key : (is_array($value) ? ($value['label'] ?? '') : '');
 
                 if ($label === '运行时间') {
-                    $rawTime = is_array($value) ? ($value['label'] ?? '') : (string)$value;
-                    if (is_string($rawTime) && !is_array($rawTime)) {
-                        $performance['time'] = $rawTime;
+                    // 运行时间值可能为字符串（如 "0.123秒"）或结构化数组
+                    if (is_string($value)) {
+                        $performance['time'] = $value;
+                    } elseif (is_array($value) && isset($value['value']) && is_string($value['value'])) {
+                        $performance['time'] = $value['value'];
                     }
                 }
 
                 if ($label === '内存消耗') {
-                    $rawMem = is_array($value) ? ($value['label'] ?? '') : (string)$value;
-                    if (is_string($rawMem) && !is_array($rawMem)) {
-                        $performance['memory'] = $rawMem;
+                    if (is_string($value)) {
+                        $performance['memory'] = $value;
+                    } elseif (is_array($value) && isset($value['value']) && is_string($value['value'])) {
+                        $performance['memory'] = $value['value'];
                     }
                 }
             }

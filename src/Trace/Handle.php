@@ -506,7 +506,8 @@ class Handle
 
         $basePath = base_path() ?: '';
 
-        if (!str_contains($file, $basePath)) {
+        // 防御：base_path 为空时无法做相对化，直接原样返回
+        if ($basePath === '' || !str_contains($file, $basePath)) {
             return $file;
         }
 

@@ -76,6 +76,12 @@ function _t_is_ajax(): bool {
 function _t_render(int $code, string $badge, string $msg, string $sug='', string $file='', int $line=0): void {
   global $_trace_id;
 
+  // 规范化 HTTP 状态码，避免越界值（如业务码 1001 / 0 / 负数）被当作
+  // HTTP 状态发出，造成「响应错误码与实际不符」或代理解析异常。
+  if ($code < 100 || $code > 599) {
+    $code = 500;
+  }
+
   // ★ 关键：临时完全关闭 PHP 错误显示与报告，确保渲染过程不受任何 PHP 错误污染
   @ini_set('display_errors', '0');
   error_reporting(0);
@@ -241,7 +247,15 @@ set_exception_handler(function(\Throwable $e) {
 
   $_trace_last = ['type'=>get_class($e),'code'=>$e->getCode()?:500,'message'=>$e->getMessage(),'file'=>$e->getFile(),'line'=>$e->getLine(),'time'=>date('Y-m-d H:i:s'),'eid'=>$_trace_id];
   if (!$_trace_child) {
-    _t_render(500, get_class($e), $e->getMessage(), '请检查代码逻辑', $e->getFile(), $e->getLine());
+    // ★ 根据异常类型映射 HTTP 状态码，避免所有异常一律显示 500
+    // （如 404/403/422 等客户端错误应保留真实状态码）
+    $code = 500;
+    if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+      $code = $e->getStatusCode();
+    } elseif (is_int($e->getCode()) && $e->getCode() >= 100 && $e->getCode() < 600) {
+      $code = $e->getCode();
+    }
+    _t_render($code, get_class($e), $e->getMessage(), '请检查代码逻辑', $e->getFile(), $e->getLine());
     exit(1);
   }
 });
@@ -271,7 +285,9 @@ register_shutdown_function(function() use (&$_trace_mem) {
   // 2) 已拦截的异常
   if ($_trace_last !== null && !empty($_trace_last['type'])) {
     $d = $_trace_last;
-    _t_render(500, $d['type'], $d['message'] ?? '错误', '请检查代码', $d['file'] ?? '', $d['line'] ?? 0);
+    // 使用记录的状态码（若为合法 HTTP 状态码则保留，否则回退 500）
+    $code = (is_int($d['code']) && $d['code'] >= 100 && $d['code'] < 600) ? $d['code'] : 500;
+    _t_render($code, $d['type'], $d['message'] ?? '错误', '请检查代码', $d['file'] ?? '', $d['line'] ?? 0);
     exit(1);
   }
 

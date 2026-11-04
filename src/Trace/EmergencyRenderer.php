@@ -150,9 +150,17 @@ class EmergencyRenderer
     private static function extractErrorInfo(\Throwable|string $error): array
     {
         if ($error instanceof \Throwable) {
+            // 规范化异常 code：Throwable::getCode() 可能返回 string/float，
+            // 统一转为 int，非法值回退 500，避免下游类型错误
+            $rawCode = $error->getCode();
+            $code = is_int($rawCode) ? $rawCode : (is_numeric($rawCode) ? (int) $rawCode : 0);
+            if ($code < 100 || $code > 599) {
+                $code = 500;
+            }
+
             return [
                 'message' => $error->getMessage() ?: '系统发生错误',
-                'code' => $error->getCode() ?: 500,
+                'code' => $code,
                 'file' => $error->getFile(),
                 'line' => $error->getLine(),
                 'trace' => $error->getTraceAsString(),
@@ -745,9 +753,44 @@ HTML;
      */
     private static function writeToLogFile(string $logMessage): void
     {
+        // 优先读取 config/trace.php 的 fallback_handler.emergency_log 配置。
+        // 若显式关闭紧急日志，则直接跳过文件写入（error_log 仍在 logError 中执行）。
+        $emergencyEnabled = true;
+        $configuredPath = '';
+        try {
+            if (function_exists('config')) {
+                $emergencyEnabled = (bool) config('trace.fallback_handler.emergency_log.enabled', true);
+                $configuredPath = (string) config('trace.fallback_handler.emergency_log.path', '');
+            }
+        } catch (\Throwable) {
+            // 配置读取失败时保持默认启用
+        }
+
+        if (! $emergencyEnabled) {
+            return;
+        }
+
         $possibleLogDirs = [];
 
-        // 1. 尝试使用 Laravel 的 storage_path() 函数
+        // 1. 优先使用配置的日志路径（相对于 storage_path，未提供 storage_path 时按绝对路径处理）
+        if ($configuredPath !== '') {
+            try {
+                if (function_exists('storage_path')) {
+                    $configuredDir = str_starts_with($configuredPath, '/')
+                        ? $configuredPath
+                        : storage_path($configuredPath);
+                } else {
+                    $configuredDir = $configuredPath;
+                }
+                if (is_string($configuredDir) && $configuredDir !== '') {
+                    $possibleLogDirs[] = $configuredDir;
+                }
+            } catch (\Throwable) {
+                // 配置路径解析失败，回退到默认探测
+            }
+        }
+
+        // 2. 尝试使用 Laravel 的 storage_path() 函数
         try {
             if (function_exists('storage_path')) {
                 $storageLogs = storage_path('logs');

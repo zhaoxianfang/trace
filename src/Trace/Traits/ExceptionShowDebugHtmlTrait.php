@@ -51,6 +51,9 @@ trait ExceptionShowDebugHtmlTrait
      */
     private function doOutputDebugHtml(array $list = [], string $title = '', int $statusCode = 500, bool $showTrace = true)
     {
+        // 规范化 HTTP 状态码，避免把业务码 / 越界值当作 HTTP 状态发出
+        $statusCode = $this->normalizeHttpCode($statusCode);
+
         // 处理标题，为空时使用默认标题
         $title = ! empty($title) ? $title : '系统错误/调试';
 

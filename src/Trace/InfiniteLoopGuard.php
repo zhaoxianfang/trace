@@ -70,11 +70,14 @@ class InfiniteLoopGuard
         if ($memoryLimit > 0) {
             $safeLimit = $memoryLimit - (5 * 1024 * 1024); // 5MB 缓冲
             if ($safeLimit > 0) {
-                // 设置内存告警阈值
+                // 内存告警：仅记录日志，不中断执行。
+                // 说明：在 enter() 的首次 init() 时内存可能已接近限制（例如页面渲染
+                // 本身已占用大量内存），若此处直接 exit(1) 会破坏正常的调试面板渲染流程。
+                // 真正的内存耗尽由 handleShutdown() 在 PHP 抛出致命错误时统一处理。
                 if (function_exists('memory_get_usage')) {
                     $currentMemory = memory_get_usage(true);
                     if ($currentMemory > $safeLimit * 0.95) {
-                        self::triggerEmergencyResponse('内存使用接近限制', 500);
+                        @error_log("[InfiniteLoopGuard] 内存使用接近限制: " . $currentMemory . " / " . $memoryLimit);
                     }
                 }
             }

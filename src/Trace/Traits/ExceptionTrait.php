@@ -127,9 +127,11 @@ trait ExceptionTrait
     protected function setErrorMessage(Throwable $e): string
     {
         if (str_contains(strtoupper($e->getMessage()) , 'SQLSTATE')) {
-            // 通过错误消息中是否包含 SQLSTATE 字符串来判断是否为 数据库相关异常
+            // 通过错误消息中是否包含 SQLSTATE 字符串来判断是否为数据库相关异常。
+            // 仅标记为系统错误，不再强行改写 self::$code，否则会覆盖 setStatusCode()
+            // 已正确映射的状态码（例如重复插入 QueryException 应返回 409 而非 500），
+            // 造成「响应错误码与实际异常不符」。
             self::$isSysErr = true;
-            self::$code = 500; // 设置为 500 系统错误
         }
         // if (App::environment('production') || ! config('app.debug') || self::$isSysErr) {
         if (! self::$isUserErr && (App::environment('production') || self::$isSysErr) && ! config('app.debug')) {
@@ -400,10 +402,17 @@ trait ExceptionTrait
      */
     protected function getRelativePath(string $path): string
     {
-        $basePath = base_path() ?: '';
-        if (str_starts_with($path, $basePath)) {
-            return substr($path, strlen($basePath));
+        if ($path === '') {
+            return '';
         }
-        return $path;
+
+        $basePath = base_path() ?: '';
+
+        // 防御：base_path 为空时无法做相对化，直接原样返回
+        if ($basePath === '' || !str_starts_with($path, $basePath)) {
+            return $path;
+        }
+
+        return substr($path, strlen($basePath));
     }
 }

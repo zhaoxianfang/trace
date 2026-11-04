@@ -77,9 +77,18 @@ trait ModelCollectorTrait
             return;
         }
 
+        // 防御：全局 Eloquent 事件监听器内若 payload 非模型实例会直接击穿宿主应用，
+        // 因此必须先校验对象与 getKey 方法存在，避免监听回调中抛出致命异常。
         $model = is_array($model) && isset($model[0]) ? $model[0] : $model;
+        if (! is_object($model) || ! method_exists($model, 'getKey')) {
+            return;
+        }
 
-        $modelName = trim(explode(':', $listenString)[1]);
+        $listenParts = explode(':', $listenString, 2);
+        $modelName = isset($listenParts[1]) ? trim($listenParts[1]) : '';
+        if ($modelName === '') {
+            return;
+        }
         $modelId = $model->getKey();
 
         self::$modelList[$this->requestId] ??= [];

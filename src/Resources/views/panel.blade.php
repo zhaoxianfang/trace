@@ -192,7 +192,7 @@
 /* ===== JSON Label/Value 通用样式（兼容动态渲染） ===== */
 #trace-debug-panel .json-label {
     flex-shrink: 0;
-    min-width: 120px;
+    min-width: 200px;
     font-size: 12px;
     color: #8b949e;
     text-transform: uppercase;
@@ -222,7 +222,14 @@
 }
 
 #trace-debug-panel .json-right {
+    width: 116px;
     flex-shrink: 0;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
     font-size: 12px;
     color: #58a6ff;
     margin-left: auto;
@@ -234,6 +241,18 @@
     font-size: 13px;
     color: #e6edf3;
     word-break: break-all;
+}
+
+/* Models Tab：中间内容区固定 100px 宽，flex 收缩为固定基值 */
+#trace-debug-panel .trace-content[data-content="models"] .json-string-content {
+    width: 100px;
+    flex: 0 0 100px;
+    max-width: 100px;
+}
+
+/* Models Tab：标签列在内容固定 100px 时自动撑满剩余宽度，避免右侧留白 */
+#trace-debug-panel .trace-content[data-content="models"] .json-label {
+    flex: 1 1 auto;
 }
 
 /* IDE 编辑器文件链接（phpdebugbar-link） */

@@ -37,6 +37,35 @@ class TraceMiddleware
     protected static int $maxTrackedRequests = 1000;
 
     /**
+     * 标记配置是否已加载（常驻进程下仅加载一次）
+     */
+    protected static bool $configLoaded = false;
+
+    /**
+     * 从配置加载请求跟踪上限（仅执行一次，避免每次请求重复读取配置）
+     *
+     * 对应 config/trace.php 中的 limits.max_tracked_requests 配置项。
+     *
+     * @return void
+     */
+    protected function loadMaxTrackedRequests(): void
+    {
+        if (self::$configLoaded) {
+            return;
+        }
+        self::$configLoaded = true;
+
+        try {
+            $configured = config('trace.limits.max_tracked_requests');
+            if (is_int($configured) && $configured > 0) {
+                self::$maxTrackedRequests = $configured;
+            }
+        } catch (\Throwable) {
+            // 配置读取失败时保留默认值
+        }
+    }
+
+    /**
      * 处理 HTTP 请求
      *
      * @param  Request  $request  HTTP 请求对象
@@ -46,6 +75,9 @@ class TraceMiddleware
      */
     public function handle(Request $request, Closure $next)
     {
+        // 首次请求时加载配置中的跟踪上限
+        $this->loadMaxTrackedRequests();
+
         // 使用请求对象 ID 检查是否已经处理过此请求
         $requestId = spl_object_id($request);
 

@@ -369,11 +369,15 @@ class FallbackExceptionHandler
     {
         try {
             $memoryLimit = ini_get('memory_limit');
-            if ($memoryLimit === '-1') {
+            if ($memoryLimit === '-1' || trim((string) $memoryLimit) === '') {
                 return false; // 无限制
             }
 
-            $memoryLimitBytes = self::parseMemoryLimit($memoryLimit);
+            $memoryLimitBytes = self::parseMemoryLimit((string) $memoryLimit);
+            if ($memoryLimitBytes <= 0) {
+                return false; // 无法解析或无限制，视为内存充足
+            }
+
             $currentUsage = memory_get_usage(true);
             $available = $memoryLimitBytes - $currentUsage;
 
@@ -392,6 +396,12 @@ class FallbackExceptionHandler
     private static function parseMemoryLimit(string $limit): int
     {
         $limit = trim($limit);
+
+        // 空字符串或无法解析的值，返回 -1（视为无限制）
+        if ($limit === '' || $limit === '-1') {
+            return -1;
+        }
+
         $last = strtolower($limit[strlen($limit) - 1]);
         $value = (int) $limit;
 
@@ -399,7 +409,7 @@ class FallbackExceptionHandler
             'g' => $value * 1024 * 1024 * 1024,
             'm' => $value * 1024 * 1024,
             'k' => $value * 1024,
-            default => $value,
+            default => $value > 0 ? $value : -1,
         };
     }
 
@@ -661,12 +671,13 @@ class FallbackExceptionHandler
     {
         // 检查是否为 HTTP 异常
         if ($exception instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
-            return $exception->getStatusCode();
+            $statusCode = $exception->getStatusCode();
+            return is_int($statusCode) ? $statusCode : 500;
         }
 
         // 检查异常代码是否在有效范围内
         $code = $exception->getCode();
-        if ($code >= 100 && $code < 600) {
+        if (is_int($code) && $code >= 100 && $code < 600) {
             return $code;
         }
 

@@ -20,18 +20,23 @@ return [
      * 兜底错误处理配置
      *
      * 用于配置在 Laravel 框架无法正常工作时（如引导阶段异常、致命错误）的错误处理行为
+     *
+     * 说明：以下配置项中，enabled / custom_error_view / emergency_log 已实际生效；
+     * 其余项（force_enabled / include_request_id / include_timestamp / retention_days）
+     * 为预留配置，当前版本使用固定行为（请求 ID 与时间戳始终输出），
+     * 后续版本将逐步接入，避免误导使用方。
      */
     'fallback_handler' => [
         // 是否启用兜底错误处理器
         'enabled' => true,
 
-        // 是否在调试模式下也启用兜底处理器（通常只在生产环境启用）
+        // 是否在调试模式下也启用兜底处理器（通常只在生产环境启用）【预留】
         'force_enabled' => false,
 
-        // 是否在响应中包含请求ID（便于追踪问题）
+        // 是否在响应中包含请求ID（便于追踪问题）【预留：当前始终输出】
         'include_request_id' => true,
 
-        // 是否在响应中包含时间戳
+        // 是否在响应中包含时间戳【预留：当前始终输出】
         'include_timestamp' => true,
 
         // 自定义错误页面路径（留空使用默认模板）
@@ -45,7 +50,7 @@ return [
             // 日志存储路径（相对于 storage_path）
             'path' => 'logs/emergency',
 
-            // 日志文件保留天数
+            // 日志文件保留天数【预留：当前未实现自动清理】
             'retention_days' => 7,
         ],
     ],
@@ -162,13 +167,10 @@ return [
         // 最大绑定参数数量
         'max_bindings' => 50,
 
-        // 反射缓存最大条目数
-        'max_reflection_cache' => 100,
-
-        // 请求跟踪最大条目数（中间件使用）
+        // 请求跟踪最大条目数（TraceMiddleware 使用，防止常驻进程下静态数组无限增长）
         'max_tracked_requests' => 1000,
 
-        // 已报告异常最大条目数
+        // 已报告异常最大条目数（TraceExceptionHandler 使用，防止常驻进程下 reportedHashes 无限累积）
         'max_reported_exceptions' => 100,
 
         // 单次请求最多记录的模型事件数量（防止内存无限增长导致 OOM）
@@ -176,9 +178,11 @@ return [
     ],
 
     /**
-     * 性能监控配置
+     * 性能监控配置（预留）
      *
-     * 用于监控 Trace 包本身的性能指标。
+     * 说明：PerformanceMonitor 类（src/Trace/PerformanceMonitor.php）提供了完整的
+     * 计时与指标统计 API，但当前 Trace 主流程尚未自动接入，需业务方手动调用
+     * PerformanceMonitor::start()/end() 使用。本配置项保留用于未来版本自动接入。
      */
     'performance_monitoring' => [
         // 是否启用性能监控

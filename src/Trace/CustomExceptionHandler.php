@@ -216,9 +216,17 @@ class CustomExceptionHandler
             // 如果 Trace 处理失败，使用兜底渲染器
             EmergencyRenderer::logError($err, 'CustomExceptionHandler::handleExceptionRender');
 
-            // 使用紧急渲染器作为最后手段
-            $code = $e->getCode() >= 100 && $e->getCode() < 600 ? $e->getCode() : 500;
-            EmergencyRenderer::render($e, $code);
+            // 使用紧急渲染器作为最后手段（安全校验状态码类型）
+            $code = is_int($e->getCode()) && $e->getCode() >= 100 && $e->getCode() < 600 ? $e->getCode() : 500;
+            try {
+                EmergencyRenderer::render($e, $code);
+            } catch (\Throwable $finalError) {
+                if (! headers_sent()) {
+                    http_response_code(500);
+                    header('Content-Type: text/plain; charset=utf-8');
+                }
+                echo 'Server Error';
+            }
             exit(1);
         }
     }
