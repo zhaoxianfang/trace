@@ -415,7 +415,9 @@ HTML;
             $html .= "<span class='json-right'>{$right}</span>";
         }
 
-        return $html;
+        // 统一包入弹性行容器：保证 label + right（无 json-string-content 中间列的通用项，
+        // 如未分组的 SQL 条目）在任意渲染模式下右侧徽标都能贴右（margin-left:auto 依赖弹性父容器）。
+        return '<div class="trace-item-row">' . $html . '</div>';
     }
 
     /**

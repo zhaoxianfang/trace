@@ -173,6 +173,20 @@
     border-bottom: none;
 }
 
+/* 通用数据项弹性行容器：保证 label + right（无 json-string-content 中间列）时右列贴右 */
+#trace-debug-panel .trace-item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+#trace-debug-panel .trace-item-row .json-right {
+    margin-left: auto;
+}
+
 #trace-debug-panel .trace-label {
     flex-shrink: 0;
     width: 120px;

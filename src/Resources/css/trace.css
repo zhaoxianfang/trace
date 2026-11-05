@@ -249,6 +249,20 @@
 }
 
 #trace-tools-box .tabs-content > ul > li:hover { background-color: var(--tf-bg-surface); }
+
+/* 通用数据项弹性行容器：保证 label + right（无 json-string-content 中间列）时右列贴右 */
+#trace-tools-box .trace-item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+#trace-tools-box .trace-item-row .json-right {
+    margin-left: auto;
+}
 #trace-tools-box .tabs-content > ul > li:nth-child(even) { background-color: rgba(30, 41, 59, 0.5); }
 #trace-tools-box .tabs-content > ul > li:nth-child(odd) { background-color: rgba(15, 23, 42, 0.8); }
 
@@ -327,6 +341,7 @@
     color: var(--tf-text-secondary);
     text-align: right;
     flex-shrink: 0;
+    margin-left: auto;
 }
 
 /* Models Tab：中间内容区固定 100px 宽，flex 收缩为固定基值（覆盖上方 flex:1） */
